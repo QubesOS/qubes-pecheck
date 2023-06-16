@@ -81,6 +81,7 @@ typedef struct IMAGE_OPTIONAL_HEADER32 {
   uint32_t                SizeOfHeapCommit;
   uint32_t                LoaderFlags;
   uint32_t                NumberOfRvaAndSizes;
+  IMAGE_DATA_DIRECTORY    DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
 } __attribute__((__may_alias__)) IMAGE_OPTIONAL_HEADER32, *PIMAGE_OPTIONAL_HEADER32;
 
 typedef struct IMAGE_OPTIONAL_HEADER64 {
@@ -113,6 +114,7 @@ typedef struct IMAGE_OPTIONAL_HEADER64 {
   uint64_t                SizeOfHeapCommit;
   uint32_t                LoaderFlags;
   uint32_t                NumberOfRvaAndSizes;
+  IMAGE_DATA_DIRECTORY    DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
 } __attribute__((__may_alias__)) IMAGE_OPTIONAL_HEADER64, *PIMAGE_OPTIONAL_HEADER64;
 
 typedef struct IMAGE_NT_HEADERS32 {
@@ -136,6 +138,12 @@ struct SharedNtHeader {
    uint32_t          SizeOfCode;
 } __attribute__((__may_alias__));
 static_assert(sizeof(struct SharedNtHeader) == 32, "bad size of struct SharedNtHeader");
+
+union PeHeader {
+   struct SharedNtHeader shared;
+   IMAGE_NT_HEADERS32    pe32;
+   IMAGE_NT_HEADERS64    pe32p;
+} __attribute__((__may_alias__));
 
 struct ParsedImage {
    uint64_t image_base;

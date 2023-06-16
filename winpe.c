@@ -16,8 +16,6 @@ static_assert(sizeof(IMAGE_SECTION_HEADER) == 8 + 4 * 6 + 2 * 2 + 4,
               "IMAGE_SECTION_HEADER has padding?");
 
 
-#define aligned(v, t) (!((uintptr_t)(v) & alignof(t)))
-
 #define OPTIONAL_HEADER_OFFSET32 (offsetof(IMAGE_NT_HEADERS32, OptionalHeader))
 #define OPTIONAL_HEADER_OFFSET64 (offsetof(IMAGE_NT_HEADERS64, OptionalHeader))
 
@@ -36,7 +34,7 @@ static_assert(offsetof(IMAGE_NT_HEADERS64, FileHeader) == 4,
 static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header");
 
 #define MASK(a, b) (_Generic(b, typeof(a): (a) & ~(b)))
-#define ROUND_UP(a, b) (MASK((a) + (b), (b) - 1))
+#define ROUND_UP(a, b) (MASK((a) + ((b) - 1), (b) - 1))
 #define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
 
 static bool
@@ -76,60 +74,78 @@ validate_image_base_and_alignment(uint64_t const image_base,
    return true;
 }
 
-static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
+/**
+ * Extract the NT header, skipping over any DOS header.
+ *
+ * \return The pointer on success, or NUL on failure.
+ */
+static const union PeHeader*
+extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
    static_assert(sizeof(struct IMAGE_DOS_HEADER) < sizeof(IMAGE_NT_HEADERS64),
                  "NT header shorter than DOS header?");
    static_assert(sizeof(struct IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS64) <= 512,
                  "headers too long");
 
-   if (len < 512) {
-      LOG("Too short (min length 512, got %zu)", len);
-      return false;
-   }
-
    if (len > 0x7FFFFFFFUL) {
       LOG("Too long (max length 0x7FFFFFFF, got 0x%zx)", len);
-      return false;
+      return NULL;
    }
 
-   if (!aligned(ptr, IMAGE_NT_HEADERS64)) {
+   if (len < 512) {
+      LOG("Too short (min length 512, got %zu)", len);
+      return NULL;
+   }
+
+   if ((uintptr_t)ptr & 7) {
       LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
-      return false;
+      return NULL;
    }
 
-   uint32_t nt_header_offset = 0;
+   union PeHeader const* retval;
    if (ptr[0] == 'M' && ptr[1] == 'Z') {
       /* Skip past DOS header */
-      nt_header_offset = ((const struct IMAGE_DOS_HEADER *)ptr)->e_lfanew;
+      uint32_t const nt_header_offset = ((const struct IMAGE_DOS_HEADER *)ptr)->e_lfanew;
 
       if (nt_header_offset < sizeof(struct IMAGE_DOS_HEADER)) {
          LOG("DOS header overlaps NT header (%" PRIi32 " less than %zu)",
              nt_header_offset, sizeof(struct IMAGE_DOS_HEADER));
-         return false;
+         return NULL;
       }
 
       if (nt_header_offset > len - 512) {
          LOG("NT header does not leave room for section (offset %" PRIi32 ", file size %zu)",
              nt_header_offset, len);
-         return false;
+         return NULL;
       }
 
-      if (!aligned(nt_header_offset, IMAGE_NT_HEADERS64)) {
-         LOG("NT header misaligned (offset %" PRIi32 ", expected alignment %zu)",
-             nt_header_offset, alignof(IMAGE_NT_HEADERS64));
-         return false;
+      if (nt_header_offset & 7) {
+         LOG("NT header not 8-byte aligned (offset %" PRIi32 ")", nt_header_offset);
+         return NULL;
       }
+
+      retval = (const union PeHeader *)(ptr + nt_header_offset);
+   } else {
+      retval = (const union PeHeader *)ptr;
    }
 
-   uint32_t const nt_len = (uint32_t)len - nt_header_offset;
-   struct SharedNtHeader const *untrusted_nt_header = (struct SharedNtHeader const *)(ptr + nt_header_offset);
-   if (memcmp(untrusted_nt_header, "PE\0", 4) != 0) {
+   if (memcmp(retval, "PE\0", 4) != 0) {
       LOG("Bad magic for NT header");
-      return false;
+      return NULL;
    }
 
-   const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_nt_header->FileHeader;
+   return retval;
+}
+
+static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
+{
+   union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
+   if (untrusted_pe_header == NULL)
+      return NULL;
+
+   uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
+   uint32_t const nt_len = (uint32_t)len - nt_header_offset;
+   const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_pe_header->shared.FileHeader;
 #if 0
    if (!(untrusted_file_header->Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) {
       LOG("File is not executable");
@@ -153,6 +169,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           untrusted_file_header->SizeOfOptionalHeader, sizeof(IMAGE_OPTIONAL_HEADER32));
       return false;
    }
+
    size_t const max_optional_header_size = sizeof(IMAGE_OPTIONAL_HEADER64) + IMAGE_NUMBEROF_DIRECTORY_ENTRIES * sizeof(IMAGE_DATA_DIRECTORY);
    if (untrusted_file_header->SizeOfOptionalHeader > max_optional_header_size) {
       LOG("Optional header too long: got %" PRIu32 " but maximum is %zu",
@@ -185,34 +202,30 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint32_t untrusted_number_of_directory_entries;
    uint32_t min_size_of_optional_header;
 
-   if (untrusted_nt_header->Magic == 0x10b) {
-      const IMAGE_NT_HEADERS32 *untrusted_image;
-      if (nt_len < sizeof(*untrusted_image)) {
-         LOG("32-bit NT header does not fit in image");
-         return false;
-      }
-      untrusted_image = (const IMAGE_NT_HEADERS32 *)untrusted_nt_header;
-      untrusted_number_of_directory_entries = untrusted_image->OptionalHeader.NumberOfRvaAndSizes;
-      min_size_of_optional_header = sizeof(untrusted_image->OptionalHeader);
-      untrusted_image_base = untrusted_image->OptionalHeader.ImageBase;
-      untrusted_file_alignment = untrusted_image->OptionalHeader.FileAlignment;
-      untrusted_section_alignment = untrusted_image->OptionalHeader.SectionAlignment;
-      untrusted_size_of_headers = untrusted_image->OptionalHeader.SizeOfHeaders;
-   } else if (untrusted_nt_header->Magic == 0x20b) {
-      const IMAGE_NT_HEADERS64 *untrusted_image;
-      if (nt_len < sizeof(*untrusted_image)) {
-         LOG("64-bit NT header does not fit in image");
-         return false;
-      }
-      untrusted_image = (const IMAGE_NT_HEADERS64 *)untrusted_nt_header;
-      untrusted_number_of_directory_entries = untrusted_image->OptionalHeader.NumberOfRvaAndSizes;
-      min_size_of_optional_header = sizeof(untrusted_image->OptionalHeader);
-      untrusted_image_base = untrusted_image->OptionalHeader.ImageBase;
-      untrusted_file_alignment = untrusted_image->OptionalHeader.FileAlignment;
-      untrusted_section_alignment = untrusted_image->OptionalHeader.SectionAlignment;
-      untrusted_size_of_headers = untrusted_image->OptionalHeader.SizeOfHeaders;
+   if (untrusted_pe_header->shared.Magic == 0x10b) {
+      LOG("This is a PE32 file: magic 0x10b");
+      static_assert(offsetof(IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
+      static_assert(offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96,
+                    "wrong size");
+      min_size_of_optional_header = offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory);
+      untrusted_image_base = untrusted_pe_header->pe32.OptionalHeader.ImageBase;
+      untrusted_file_alignment = untrusted_pe_header->pe32.OptionalHeader.FileAlignment;
+      untrusted_section_alignment = untrusted_pe_header->pe32.OptionalHeader.SectionAlignment;
+      untrusted_size_of_headers = untrusted_pe_header->pe32.OptionalHeader.SizeOfHeaders;
+      untrusted_number_of_directory_entries = untrusted_pe_header->pe32.OptionalHeader.NumberOfRvaAndSizes;
+   } else if (untrusted_pe_header->shared.Magic == 0x20b) {
+      LOG("This is a PE32+ file: magic 0x20b");
+      static_assert(offsetof(IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
+      static_assert(offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112,
+                    "wrong size");
+      min_size_of_optional_header = offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory);
+      untrusted_image_base = untrusted_pe_header->pe32p.OptionalHeader.ImageBase;
+      untrusted_file_alignment = untrusted_pe_header->pe32p.OptionalHeader.FileAlignment;
+      untrusted_section_alignment = untrusted_pe_header->pe32p.OptionalHeader.SectionAlignment;
+      untrusted_size_of_headers = untrusted_pe_header->pe32p.OptionalHeader.SizeOfHeaders;
+      untrusted_number_of_directory_entries = untrusted_pe_header->pe32p.OptionalHeader.NumberOfRvaAndSizes;
    } else {
-      LOG("Bad optional header magic %" PRIu16, untrusted_nt_header->Magic);
+      LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->shared.Magic);
       return false;
    }
    if (untrusted_number_of_directory_entries > IMAGE_NUMBEROF_DIRECTORY_ENTRIES) {
@@ -220,16 +233,20 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           untrusted_number_of_directory_entries);
       return false;
    }
+   image->directory_entries = untrusted_number_of_directory_entries;
    if (untrusted_size_of_headers >= len) {
       LOG("No space for sections!");
       return false;
    }
-   image->directory_entries = untrusted_number_of_directory_entries;
-   if (!validate_image_base_and_alignment(untrusted_image_base, untrusted_file_alignment, untrusted_section_alignment))
+
+   if (!validate_image_base_and_alignment(untrusted_image_base,
+                                          untrusted_file_alignment,
+                                          untrusted_section_alignment))
       return false;
    image->file_alignment = untrusted_file_alignment;
    image->section_alignment = untrusted_section_alignment;
    image->image_base = untrusted_image_base;
+
    uint32_t const expected_optional_header_size =
       image->directory_entries * sizeof(IMAGE_DATA_DIRECTORY) +
       min_size_of_optional_header;
@@ -239,9 +256,10 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       return false;
    }
    image->directory = (const IMAGE_DATA_DIRECTORY *)
-      (ptr + nt_header_offset + (uint32_t)OPTIONAL_HEADER_OFFSET32 + min_size_of_optional_header);
+      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + min_size_of_optional_header);
+
    image->sections = (const IMAGE_SECTION_HEADER *)
-      (ptr + nt_header_offset + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
+      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
    image->size_of_headers = ROUND_UP(nt_header_offset + nt_header_size, image->file_alignment);
    if (untrusted_size_of_headers != image->size_of_headers) {
       LOG("Bad size of headers: got %" PRIu32 " but expected %" PRIu64 "!",
