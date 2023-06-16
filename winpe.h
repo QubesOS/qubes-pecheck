@@ -37,6 +37,12 @@ typedef struct IMAGE_DATA_DIRECTORY {
   uint32_t size;
 } __attribute__((__may_alias__)) IMAGE_DATA_DIRECTORY, *PIMAGE_DATA_DIRECTORY;
 
+struct WIN_CERTIFICATE {
+   uint32_t length;
+   uint16_t revision;
+   uint16_t certificate_type;
+} __attribute__((__may_alias__));
+
 typedef struct IMAGE_SECTION_HEADER {
    uint8_t  Name[8];
    uint32_t VirtualSize;

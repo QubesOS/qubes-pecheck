@@ -313,6 +313,42 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       last_virtual_address = image->sections[i].VirtualAddress;
    }
 
+   uint32_t signature_size = 0;
+   uint32_t signature_offset = 0;
+   if (image->directory_entries >= 5) {
+      signature_offset = image->directory[4].VirtualAddress;
+      signature_size = image->directory[4].size;
+   }
+   if (signature_offset == 0) {
+      if (signature_size != 0) {
+         LOG("Signature offset zero but size nonzero");
+         return false;
+      } else {
+         LOG("File is not signed");
+      }
+   } else if (signature_offset != last_section_start) {
+      LOG("Signature does not start immediately after last section (%" PRIu32 " != %" PRIu32 ")",
+            signature_offset, last_section_start);
+      return false;
+   } else if (signature_size < sizeof(struct WIN_CERTIFICATE)) {
+      LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_size);
+      return false;
+   } else {
+      /* Alignment is guaranteed because signature_offset was checked to equal last_section_start,
+       * and last_section_start must be a multiple of file_alignment.  file_alignment, in turn,
+       * must be at least 512 and a power of 2.
+       */
+      const struct WIN_CERTIFICATE *sig = (const struct WIN_CERTIFICATE *)(ptr + signature_offset);
+      if (sig->length != signature_size) {
+         LOG("Size mismatch: signature is %" PRIu32 " bytes but expected %" PRIu32,
+             sig->length, signature_size);
+         return false;
+      }
+      if (sig->revision != 0x0100) {
+         LOG("Wrong signature version %" PRIu16, sig->revision);
+         return false;
+      }
+   }
    return true;
 }
 
