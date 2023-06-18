@@ -36,6 +36,8 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
 #define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
 
 #define MIN_FILE_ALIGNMENT (UINT32_C(512))
+#define MIN_OPTIONAL_HEADER_SIZE (OPTIONAL_HEADER_OFFSET32 + offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory))
+#define MAX_OPTIONAL_HEADER_SIZE (sizeof(IMAGE_OPTIONAL_HEADER64))
 
 static bool
 validate_image_base_and_alignment(uint64_t const image_base,
@@ -168,16 +170,15 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
        untrusted_file_header->NumberOfSymbols) {
       LOG("COFF symbol tables detected");
    }
-   if (untrusted_file_header->SizeOfOptionalHeader < sizeof(IMAGE_OPTIONAL_HEADER32)) {
+
+   if (untrusted_file_header->SizeOfOptionalHeader < MIN_OPTIONAL_HEADER_SIZE) {
       LOG("Optional header too short: got %" PRIu32 " but minimum is %zu",
-          untrusted_file_header->SizeOfOptionalHeader, sizeof(IMAGE_OPTIONAL_HEADER32));
+          untrusted_file_header->SizeOfOptionalHeader, MIN_OPTIONAL_HEADER_SIZE);
       return false;
    }
-
-   size_t const max_optional_header_size = sizeof(IMAGE_OPTIONAL_HEADER64) + IMAGE_NUMBEROF_DIRECTORY_ENTRIES * sizeof(IMAGE_DATA_DIRECTORY);
-   if (untrusted_file_header->SizeOfOptionalHeader > max_optional_header_size) {
+   if (untrusted_file_header->SizeOfOptionalHeader > MAX_OPTIONAL_HEADER_SIZE) {
       LOG("Optional header too long: got %" PRIu32 " but maximum is %zu",
-          untrusted_file_header->SizeOfOptionalHeader, max_optional_header_size);
+          untrusted_file_header->SizeOfOptionalHeader, MAX_OPTIONAL_HEADER_SIZE);
       return false;
    }
    uint32_t const optional_header_size = untrusted_file_header->SizeOfOptionalHeader;
