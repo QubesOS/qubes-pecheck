@@ -181,7 +181,13 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           untrusted_file_header->SizeOfOptionalHeader, MAX_OPTIONAL_HEADER_SIZE);
       return false;
    }
+   if (untrusted_file_header->SizeOfOptionalHeader & 7) {
+      LOG("Optional header size 0x%" PRIx16 " not multiple of 8",
+          untrusted_file_header->SizeOfOptionalHeader);
+      return false;
+   }
    uint32_t const optional_header_size = untrusted_file_header->SizeOfOptionalHeader;
+
    if (untrusted_file_header->NumberOfSections > 96) {
       LOG("Too many sections: got %" PRIu16 ", limit 96", untrusted_file_header->NumberOfSections);
       return false;
