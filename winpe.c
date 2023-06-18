@@ -37,6 +37,8 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
 #define ROUND_UP(a, b) (MASK((a) + ((b) - 1), (b) - 1))
 #define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
 
+#define MIN_FILE_ALIGNMENT (UINT32_C(512))
+
 static bool
 validate_image_base_and_alignment(uint64_t const image_base,
                                   uint32_t const file_alignment,
@@ -84,7 +86,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
    static_assert(sizeof(struct IMAGE_DOS_HEADER) < sizeof(IMAGE_NT_HEADERS64),
                  "NT header shorter than DOS header?");
-   static_assert(sizeof(struct IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS64) <= 512,
+   static_assert(sizeof(struct IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS64) <= MIN_FILE_ALIGNMENT,
                  "headers too long");
 
    if (len > 0x7FFFFFFFUL) {
@@ -92,7 +94,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
       return NULL;
    }
 
-   if (len < 512) {
+   if (len < MIN_FILE_ALIGNMENT) {
       LOG("Too short (min length 512, got %zu)", len);
       return NULL;
    }
@@ -113,7 +115,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
-      if (nt_header_offset > len - 512) {
+      if (nt_header_offset > len - MIN_FILE_ALIGNMENT) {
          LOG("NT header does not leave room for section (offset %" PRIi32 ", file size %zu)",
              nt_header_offset, len);
          return NULL;
