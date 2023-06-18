@@ -33,8 +33,6 @@ static_assert(offsetof(IMAGE_NT_HEADERS64, FileHeader) == 4,
               "wrong definition of IMAGE_NT_HEADERS64");
 static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header");
 
-#define MASK(a, b) (_Generic(b, typeof(a): (a) & ~(b)))
-#define ROUND_UP(a, b) (MASK((a) + ((b) - 1), (b) - 1))
 #define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
 
 #define MIN_FILE_ALIGNMENT (UINT32_C(512))
@@ -196,6 +194,11 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       LOG("Section headers do not fit in image");
       return false;
    }
+   /*
+    * Overflow is impossible because nt_header_size is less than nt_len,
+    * and nt_len + nt_header_offset is equal to len.
+    */
+   uint32_t const nt_header_end = nt_header_size + nt_header_offset;
 
    uint64_t untrusted_image_base;
    uint32_t untrusted_file_alignment;
@@ -248,7 +251,28 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    image->file_alignment = untrusted_file_alignment;
    image->section_alignment = untrusted_section_alignment;
    image->image_base = untrusted_image_base;
-
+   if (untrusted_size_of_headers & (image->file_alignment - 1)) {
+      LOG("Misaligned size of headers: got 0x%" PRIx32 " but alignment is 0x%" PRIx32,
+          untrusted_size_of_headers, image->file_alignment);
+      return false;
+   }
+   if (untrusted_size_of_headers < nt_header_end) {
+      LOG("Bad size of headers: got 0x%" PRIx32 " but first byte after section headers is 0x%" PRIx32,
+          untrusted_size_of_headers, nt_header_end);
+      return false;
+   }
+   if (untrusted_size_of_headers - nt_header_end >= image->file_alignment) {
+      LOG("Too much padding after section headers: got 0x%" PRIx32 " but limit is 0x%" PRIx32,
+          untrusted_size_of_headers - nt_header_end, image->file_alignment);
+      return false;
+   }
+   image->size_of_headers = untrusted_size_of_headers;
+   for (uint32_t i = nt_header_end; i < image->size_of_headers; ++i) {
+      if (ptr[i]) {
+         LOG("Non-zero byte at offset 0x%" PRIx32 " that should be zero", i);
+         return false;
+      }
+   }
    uint32_t const expected_optional_header_size =
       image->directory_entries * sizeof(IMAGE_DATA_DIRECTORY) +
       min_size_of_optional_header;
@@ -262,12 +286,6 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
 
    image->sections = (const IMAGE_SECTION_HEADER *)
       ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
-   image->size_of_headers = ROUND_UP(nt_header_offset + nt_header_size, image->file_alignment);
-   if (untrusted_size_of_headers != image->size_of_headers) {
-      LOG("Bad size of headers: got %" PRIu32 " but expected %" PRIu64 "!",
-          untrusted_size_of_headers, image->size_of_headers);
-      return false;
-   }
    uint32_t last_section_start = untrusted_size_of_headers;
    uint32_t last_virtual_address = 0;
    for (uint32_t i = 0; i < number_of_sections; ++i) {
