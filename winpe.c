@@ -52,7 +52,7 @@ validate_image_base_and_alignment(uint64_t const image_base,
       LOG("Misaligned section alignment %" PRIu32, section_alignment);
       return false;
    }
-   if (file_alignment < 32) {
+   if (file_alignment < MIN_FILE_ALIGNMENT) {
       LOG("Too small file alignment %" PRIu32, file_alignment);
       return false;
    }
