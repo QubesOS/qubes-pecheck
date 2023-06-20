@@ -203,7 +203,10 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
 #endif
    if (untrusted_file_header->PointerToSymbolTable ||
        untrusted_file_header->NumberOfSymbols) {
-      LOG("COFF symbol tables detected");
+      LOG("COFF symbol tables detected: symbol table offset 0x%" PRIx32
+          ", number of symbols 0x%" PRIx32,
+          untrusted_file_header->PointerToSymbolTable,
+          untrusted_file_header->NumberOfSymbols);
    }
 
    /* sanitize SizeOfOptionalHeader start */
