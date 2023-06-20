@@ -56,6 +56,8 @@ typedef struct IMAGE_SECTION_HEADER {
    uint16_t NumberOfLineNumbers;
    uint32_t Characteristics;
 } __attribute__((__may_alias__)) IMAGE_SECTION_HEADER, *PIMAGE_SECTION_HEADER;
+static_assert(sizeof(IMAGE_SECTION_HEADER) == 40, "wrong size");
+
 #define IMAGE_NUMBEROF_DIRECTORY_ENTRIES 16
 typedef struct IMAGE_OPTIONAL_HEADER32 {
   uint16_t                Magic;
