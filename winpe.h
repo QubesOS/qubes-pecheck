@@ -41,6 +41,7 @@ struct WIN_CERTIFICATE {
    uint32_t length;
    uint16_t revision;
    uint16_t certificate_type;
+   uint8_t  certificate[];
 } __attribute__((__may_alias__));
 
 typedef struct IMAGE_SECTION_HEADER {
