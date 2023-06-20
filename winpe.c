@@ -77,6 +77,11 @@ validate_image_base_and_alignment(uint64_t const image_base,
       LOG("Non-power of 2 section alignment 0x%" PRIx32, section_alignment);
       return false;
    }
+   if (image_base & (section_alignment - 1)) {
+      LOG("Image base 0x%" PRIx64 " not multiple of section alignment 0x%" PRIx32,
+          image_base, section_alignment);
+      return false;
+   }
 
    return true;
 }
