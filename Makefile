@@ -1,7 +1,7 @@
 MAKEFLAGS := -rR
 winpe: winpe.c Makefile
-ifeq "1" "1"
-	clang -fsanitize=undefined -fsanitize-minimal-runtime -D_FORTIFY_SOURCE=2 \
+ifneq "$(CC)" "gcc"
+	clang -fsanitize=undefined -fsanitize-minimal-runtime -D_FORTIFY_SOURCE=2 -g3 \
 	-Wl,-z,relro,-z,now -fPIC -owinpe -O2 -Weverything -Werror -Wno-c++98-compat \
 	-Wno-gnu-zero-variadic-macro-arguments -Wno-disabled-macro-expansion -Wno-cast-align \
 	-Wno-declaration-after-statement -Wno-unsafe-buffer-usage \
