@@ -45,11 +45,11 @@ validate_image_base_and_alignment(uint64_t const image_base,
                                   uint32_t const section_alignment)
 {
    if (image_base % (1UL << 16)) {
-      LOG("Misaligned image base %" PRIu64, image_base);
+      LOG("Image base 0x%" PRIx64 " not multiple of 0x%x", image_base, 1U << 16);
       return false;
    }
    if (section_alignment < (1U << 12)) {
-      LOG("Misaligned section alignment %" PRIu32, section_alignment);
+      LOG("Section alignment too small (0x%" PRIx32 " < 0x%x)", section_alignment, 1U << 12);
       return false;
    }
    /*
@@ -57,23 +57,24 @@ validate_image_base_and_alignment(uint64_t const image_base,
     * and 32 is enough for all the casts to be well-defined.
     */
    if (file_alignment < 32) {
-      LOG("Too small file alignment %" PRIu32, file_alignment);
+      LOG("File alignment too small (0x%" PRIx32 " < 0x%x)", file_alignment, 32);
       return false;
    }
    if (file_alignment > (1U << 16)) {
-      LOG("Too large file alignment %" PRIu32, file_alignment);
+      LOG("Too large file alignment (0x%" PRIx32 " > 0x%x)", file_alignment, 1U << 16);
       return false;
    }
    if (file_alignment & (file_alignment - 1)) {
-      LOG("Non-power of 2 file alignment %" PRIu32, file_alignment);
+      LOG("Non-power of 2 file alignment 0x%" PRIx32, file_alignment);
       return false;
    }
    if (section_alignment < file_alignment) {
-      LOG("File alignment greater than section alignment");
+      LOG("File alignment greater than section alignment (0x%" PRIx32 " > 0x%" PRIx32 ")",
+          file_alignment, section_alignment);
       return false;
    }
    if (section_alignment & (section_alignment - 1)) {
-      LOG("Non-power of 2 section alignment %" PRIu32, section_alignment);
+      LOG("Non-power of 2 section alignment 0x%" PRIx32, section_alignment);
       return false;
    }
 
