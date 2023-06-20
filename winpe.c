@@ -256,6 +256,10 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint32_t const number_of_sections = untrusted_file_header->NumberOfSections;
    /* sanitize NumberOfSections end */
 
+   image->n_sections = number_of_sections;
+   image->sections = (const IMAGE_SECTION_HEADER *)
+      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
+
    /*
     * Overflow is impossible because nt_header_size is less than nt_len,
     * and nt_len + nt_header_offset is equal to len.
