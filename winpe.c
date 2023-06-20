@@ -364,6 +364,10 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    } else if (signature_size < sizeof(struct WIN_CERTIFICATE)) {
       LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_size);
       return false;
+   } else if (signature_size > len - last_section_start) {
+      LOG("Signature too large (got 0x%" PRIx32 "but only 0x%zu bytes left in file)",
+          signature_size, len - last_section_start);
+      return false;
    } else {
       /* Alignment is guaranteed because signature_offset was checked to equal last_section_start,
        * and last_section_start must be a multiple of file_alignment.  file_alignment, in turn,
