@@ -177,6 +177,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       LOG("COFF symbol tables detected");
    }
 
+   /* sanitize SizeOfOptionalHeader start */
    if (untrusted_file_header->SizeOfOptionalHeader < MIN_OPTIONAL_HEADER_SIZE) {
       LOG("Optional header too short: got %" PRIu32 " but minimum is %zu",
           untrusted_file_header->SizeOfOptionalHeader, MIN_OPTIONAL_HEADER_SIZE);
@@ -193,6 +194,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       return false;
    }
    uint32_t const optional_header_size = untrusted_file_header->SizeOfOptionalHeader;
+   /* sanitize SizeOfOptionalHeader end */
 
    if (untrusted_file_header->NumberOfSections > 96) {
       LOG("Too many sections: got %" PRIu16 ", limit 96", untrusted_file_header->NumberOfSections);
