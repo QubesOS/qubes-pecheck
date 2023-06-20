@@ -196,6 +196,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint32_t const optional_header_size = untrusted_file_header->SizeOfOptionalHeader;
    /* sanitize SizeOfOptionalHeader end */
 
+   /* sanitize NumberOfSections start */
    if (untrusted_file_header->NumberOfSections < 1) {
       LOG("No sections!");
       return false;
@@ -205,19 +206,27 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       LOG("Too many sections: got %" PRIu16 ", limit 96", untrusted_file_header->NumberOfSections);
       return false;
    }
-   uint16_t const number_of_sections = untrusted_file_header->NumberOfSections;
-   /* Overflow is impossible because number_of_sections is 16-bit */
-   uint32_t const section_headers_size = (uint32_t)number_of_sections * (uint32_t)sizeof(IMAGE_SECTION_HEADER);
+
    /*
-    * Overflow is impossible because section_headers_size is limited to
-    * 65535 * sizeof(IMAGE_SECTION_HEADER) and optional_header_size is limited
-    * to sizeof(IMAGE_OPTIONAL_HEADER64) + IMAGE_NUMBEROF_DIRECTORY_ENTRIES * sizeof(IMAGE_DATA_DIRECTORY).
+    * Overflow is impossible because NumberOfSections is limited to 96 and
+    * optional_header_size is limited to sizeof(IMAGE_OPTIONAL_HEADER64).
+    * Therefore, the maximum is 40 * 96 + 112 + 16 * 8 = 4080 bytes.
     */
-   uint32_t const nt_header_size = section_headers_size + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size;
-   if (nt_len <= nt_header_size) {
+   uint32_t const untrusted_nt_headers_size =
+      (untrusted_file_header->NumberOfSections * (uint32_t)sizeof(IMAGE_SECTION_HEADER)) +
+      ((uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
+   /* sanitize NT headers size start */
+   if (nt_len <= untrusted_nt_headers_size) {
       LOG("Section headers do not fit in image");
       return false;
    }
+   uint32_t const nt_header_size = untrusted_nt_headers_size;
+   /* sanitize NT headers size end */
+
+   /* we now know that NumberOfSections is okay */
+   uint32_t const number_of_sections = untrusted_file_header->NumberOfSections;
+   /* sanitize NumberOfSections end */
+
    /*
     * Overflow is impossible because nt_header_size is less than nt_len,
     * and nt_len + nt_header_offset is equal to len.
