@@ -272,6 +272,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint32_t untrusted_size_of_headers;
    uint32_t untrusted_number_of_directory_entries;
    uint32_t min_size_of_optional_header;
+   uint64_t max_address;
 
    if (untrusted_pe_header->shared.Magic == 0x10b) {
       LOG("This is a PE32 file: magic 0x10b");
@@ -284,6 +285,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       untrusted_section_alignment = untrusted_pe_header->pe32.OptionalHeader.SectionAlignment;
       untrusted_size_of_headers = untrusted_pe_header->pe32.OptionalHeader.SizeOfHeaders;
       untrusted_number_of_directory_entries = untrusted_pe_header->pe32.OptionalHeader.NumberOfRvaAndSizes;
+      max_address = UINT32_MAX;
    } else if (untrusted_pe_header->shared.Magic == 0x20b) {
       LOG("This is a PE32+ file: magic 0x20b");
       static_assert(offsetof(IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
@@ -295,6 +297,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       untrusted_section_alignment = untrusted_pe_header->pe32p.OptionalHeader.SectionAlignment;
       untrusted_size_of_headers = untrusted_pe_header->pe32p.OptionalHeader.SizeOfHeaders;
       untrusted_number_of_directory_entries = untrusted_pe_header->pe32p.OptionalHeader.NumberOfRvaAndSizes;
+      max_address = UINT64_MAX;
    } else {
       LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->shared.Magic);
       return false;
@@ -351,17 +354,18 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       image->directory_entries * sizeof(IMAGE_DATA_DIRECTORY) +
       min_size_of_optional_header;
    if (optional_header_size != expected_optional_header_size) {
-      LOG("Wrong optional header size: got %" PRIu32 " but computed %zu",
+      LOG("Wrong optional header size: got %" PRIu32 " but computed %" PRIu32,
           optional_header_size, expected_optional_header_size);
       return false;
    }
    image->directory = (const IMAGE_DATA_DIRECTORY *)
       ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + min_size_of_optional_header);
 
-   image->sections = (const IMAGE_SECTION_HEADER *)
-      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
-   uint32_t last_section_start = untrusted_size_of_headers;
-   uint32_t last_virtual_address = 0;
+   /* Overflow is impossible: max_address is always at least as large as image->image_base */
+   uint64_t const image_address_space = max_address - image->image_base;
+   uint32_t last_section_start = image->size_of_headers;
+   uint64_t last_virtual_address = 0;
+   uint64_t last_virtual_address_end = 0;
    for (uint32_t i = 0; i < number_of_sections; ++i) {
       if (image->sections[i].PointerToRelocations ||
           image->sections[i].PointerToLineNumbers ||
@@ -374,12 +378,13 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       if (!validate_section_name(image->sections + i))
          return false;
 
+      /* Validate PointerToRawData and SizeOfRawData */
       if (image->sections[i].PointerToRawData & (image->file_alignment - 1)) {
          LOG("Misaligned raw data pointer");
          return false;
       }
       if (image->sections[i].SizeOfRawData & (image->file_alignment - 1)) {
-         LOG("Misaligned raw data pointer");
+         LOG("Misaligned raw data size");
          return false;
       }
       if (image->sections[i].PointerToRawData != 0) {
@@ -394,21 +399,42 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
             return false;
          }
       }
-      if (image->sections[i].VirtualAddress <= last_virtual_address) {
-         LOG("Sections not sorted by VA: 0x%" PRIx32 " < 0x%" PRIx32,
-             image->sections[i].VirtualAddress, last_virtual_address);
-         return false;
-      }
       if (len - last_section_start < image->sections[i].SizeOfRawData) {
          LOG("Section too long");
          return false;
       }
       last_section_start += image->sections[i].SizeOfRawData;
-      if (UINT32_MAX - image->sections[i].VirtualAddress < image->sections[i].SizeOfRawData) {
-         LOG("Virtual address overflow");
+
+      /* Validate VirtualAddress and VirtualSize */
+      if (image->sections[i].VirtualAddress > image_address_space) {
+         LOG("VMA too large: 0x%" PRIx32 " extends beyond address space [0x%" PRIx64 ", 0x%" PRIx64 "]",
+             image->sections[i].VirtualAddress, image->image_base, max_address);
          return false;
       }
-      last_virtual_address = image->sections[i].VirtualAddress;
+      uint64_t const untrusted_virtual_address = image->sections[i].VirtualAddress + image->image_base;
+      if (untrusted_virtual_address & (image->section_alignment - 1)) {
+         LOG("VMA not aligned: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
+             untrusted_virtual_address, image->section_alignment);
+      }
+      if (untrusted_virtual_address < last_virtual_address) {
+         LOG("Sections not sorted by VA: 0x%" PRIx64 " < 0x%" PRIx64,
+             untrusted_virtual_address, last_virtual_address);
+         return false;
+      }
+      if (max_address - untrusted_virtual_address < image->sections[i].VirtualSize) {
+         LOG("Virtual address overflow: 0x%" PRIx64 " + 0x%" PRIx32 " > 0x%" PRIx64,
+             untrusted_virtual_address, image->sections[i].VirtualSize, max_address);
+         return false;
+      }
+      if ((image->sections[i].Characteristics & 0x40000000) &&
+          (untrusted_virtual_address < last_virtual_address_end)) {
+         LOG("Sections %" PRIu32 " and %" PRIu32 " overlap in memory: 0x%" PRIx64 " in [0x%" PRIx64 ", 0x%" PRIx64 ")",
+             i - 1, i, untrusted_virtual_address, last_virtual_address, last_virtual_address_end);
+         return false;
+      }
+      last_virtual_address = untrusted_virtual_address;
+      last_virtual_address_end = last_virtual_address + image->sections[i].VirtualSize;
+
    }
 
    uint32_t untrusted_signature_size = 0;
