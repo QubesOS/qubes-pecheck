@@ -464,8 +464,9 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
          return false;
       }
 
-      if (untrusted_signature_size < sizeof(struct WIN_CERTIFICATE)) {
-         LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_size);
+      if ((untrusted_signature_size & 7) != 0) {
+         LOG("Signature size not a multiple of 8 (got 0x%" PRIx32 ")",
+             untrusted_signature_size);
          return false;
       }
 
@@ -479,6 +480,10 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
        * be maintained because sig->length must be a multiple of 8.
        */
       do {
+         if (signature_size < sizeof(struct WIN_CERTIFICATE)) {
+            LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_size);
+            return false;
+         }
          const struct WIN_CERTIFICATE *sig = (const struct WIN_CERTIFICATE *)(ptr + signature_offset);
          if (sig->revision != 0x0200) {
             LOG("Wrong signature version 0x%" PRIx16, sig->revision);
