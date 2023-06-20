@@ -299,16 +299,15 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->shared.Magic);
       return false;
    }
+
+   /* sanitize directory entry number start */
    if (untrusted_number_of_directory_entries > IMAGE_NUMBEROF_DIRECTORY_ENTRIES) {
       LOG("Too many NumberOfRvaAndSizes (got %" PRIu32 ", limit 16",
           untrusted_number_of_directory_entries);
       return false;
    }
    image->directory_entries = untrusted_number_of_directory_entries;
-   if (untrusted_size_of_headers >= len) {
-      LOG("No space for sections!");
-      return false;
-   }
+   /* sanitize directory entry number end */
 
    if (!validate_image_base_and_alignment(untrusted_image_base,
                                           untrusted_file_alignment,
@@ -317,6 +316,13 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    image->file_alignment = untrusted_file_alignment;
    image->section_alignment = untrusted_section_alignment;
    image->image_base = untrusted_image_base;
+
+   /* sanitize SizeOfHeaders start */
+   if (untrusted_size_of_headers >= len) {
+      LOG("SizeOfHeaders extends past end of image (0x%" PRIx32 " > 0x%zu)",
+          untrusted_size_of_headers, len);
+      return false;
+   }
    if (untrusted_size_of_headers & (image->file_alignment - 1)) {
       LOG("Misaligned size of headers: got 0x%" PRIx32 " but alignment is 0x%" PRIx32,
           untrusted_size_of_headers, image->file_alignment);
@@ -333,6 +339,8 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       return false;
    }
    image->size_of_headers = untrusted_size_of_headers;
+   /* sanitize SizeOfHeaders end */
+
    for (uint32_t i = nt_header_end; i < image->size_of_headers; ++i) {
       if (ptr[i]) {
          LOG("Non-zero byte at offset 0x%" PRIx32 " that should be zero", i);
