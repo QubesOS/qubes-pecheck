@@ -149,6 +149,35 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
    return retval;
 }
 
+static bool
+validate_section_name(const IMAGE_SECTION_HEADER *section)
+{
+   /* Validate section name */
+   const uint8_t *name = section->Name;
+   if (name[0] != '.')
+      LOG("Section name does not start with a \".\" - is it overlong?");
+   for (uint8_t j = 0; j < sizeof(section->Name); ++j) {
+      if (name[j] == '\0') {
+         for (uint8_t k = j + 1; k < sizeof(section->Name); ++k) {
+            if (name[k] != '\0') {
+               LOG("Section name has NUL byte after non-NUL byte");
+               return false;
+            }
+         }
+         return true;
+      }
+      if (name[j] == '$') {
+         LOG("$ not allowed in image section names");
+         return false;
+      }
+      if (name[j] <= ' ' || name[j] > '~') {
+         LOG("Invalid byte %" PRIu8 " in section name", name[j]);
+         return false;
+      }
+   }
+   return true;
+}
+
 static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
 {
    union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
@@ -329,6 +358,10 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
          LOG("Invalid field set in image section");
          return false;
       }
+
+      if (!validate_section_name(image->sections + i))
+         return false;
+
       if (image->sections[i].PointerToRawData & (image->file_alignment - 1)) {
          LOG("Misaligned raw data pointer");
          return false;
