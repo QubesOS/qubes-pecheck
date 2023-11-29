@@ -158,6 +158,10 @@ validate_section_name(const IMAGE_SECTION_HEADER *section)
       LOG("Section name does not start with a \".\" - is it overlong?");
    for (uint8_t j = 0; j < sizeof(section->Name); ++j) {
       if (name[j] == '\0') {
+         if (j < 1) {
+            LOG("Empty section name not allowed");
+            return false;
+         }
          for (uint8_t k = j + 1; k < sizeof(section->Name); ++k) {
             if (name[k] != '\0') {
                LOG("Section name has NUL byte after non-NUL byte");
