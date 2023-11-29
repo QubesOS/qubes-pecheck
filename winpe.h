@@ -165,3 +165,8 @@ struct ParsedImage {
    uint32_t size_of_headers;
    uint32_t _pad0;
 };
+
+static const uint32_t pe_section_reserved_bits = 0xF6517;
+static const uint32_t pe_section_code = 0x20;
+static const uint32_t pe_section_initialized_data = 0x40;
+static const uint32_t pe_section_uninitialized_data = 0x80;

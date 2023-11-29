@@ -375,6 +375,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint32_t last_section_start = image->size_of_headers;
    uint64_t last_virtual_address = 0;
    uint64_t last_virtual_address_end = 0;
+   const uint8_t *section_name = NULL, *new_section_name = NULL;
    for (uint32_t i = 0; i < number_of_sections; ++i) {
       if (image->sections[i].PointerToRelocations != 0 ||
           image->sections[i].NumberOfRelocations != 0) {
@@ -390,6 +391,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
 
       if (!validate_section_name(image->sections + i))
          return false;
+      new_section_name = image->sections[i].Name;
 
       /* Validate PointerToRawData and SizeOfRawData */
       if (image->sections[i].PointerToRawData & (image->file_alignment - 1)) {
@@ -433,10 +435,6 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       if (untrusted_virtual_address & (image->section_alignment - 1)) {
          LOG("VMA not aligned: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
              untrusted_virtual_address, image->section_alignment);
-      }
-      if (untrusted_virtual_address < last_virtual_address) {
-         LOG("Sections not sorted by VA: 0x%" PRIx64 " < 0x%" PRIx64,
-             untrusted_virtual_address, last_virtual_address);
          return false;
       }
       if (max_address - untrusted_virtual_address < image->sections[i].VirtualSize) {
@@ -444,14 +442,32 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
              untrusted_virtual_address, image->sections[i].VirtualSize, max_address);
          return false;
       }
-      if ((image->sections[i].Characteristics & 0x40000000) &&
-          (untrusted_virtual_address < last_virtual_address_end)) {
-         LOG("Sections %" PRIu32 " and %" PRIu32 " overlap in memory: 0x%" PRIx64 " in [0x%" PRIx64 ", 0x%" PRIx64 ")",
-             i - 1, i, untrusted_virtual_address, last_virtual_address, last_virtual_address_end);
+      LOG("Section %" PRIu32 "(name %.8s) has flags 0x%" PRIx32, i, new_section_name, image->sections[i].Characteristics);
+      uint32_t untrusted_characteristics = image->sections[i].Characteristics;
+      if ((untrusted_characteristics & pe_section_reserved_bits) != 0) {
+         LOG("Section %" PRIu32 ": characteristics 0x%08" PRIx32 " has reserved bits",
+             i, untrusted_characteristics);
          return false;
       }
-      last_virtual_address = untrusted_virtual_address;
-      last_virtual_address_end = last_virtual_address + image->sections[i].VirtualSize;
+      if ((untrusted_characteristics & (pe_section_code|pe_section_initialized_data|pe_section_uninitialized_data))) {
+         if (untrusted_virtual_address < last_virtual_address) {
+            assert(new_section_name != NULL);
+            assert(section_name != NULL);
+            LOG("Sections not sorted by VA: current section (%.8s) VA 0x%" PRIx64 " < previous section (%.8s) 0x%" PRIx64,
+                new_section_name, untrusted_virtual_address, section_name, last_virtual_address);
+            return false;
+         }
+         if (untrusted_virtual_address < last_virtual_address_end) {
+            assert(new_section_name != NULL);
+            assert(section_name != NULL);
+            LOG("Sections %.8s (%" PRIu32 ") and %.8s (%" PRIu32 ") overlap in memory: 0x%" PRIx64 " in [0x%" PRIx64 ", 0x%" PRIx64 ")",
+                section_name, i - 1, new_section_name, i, untrusted_virtual_address, last_virtual_address, last_virtual_address_end);
+            return false;
+         }
+         last_virtual_address = untrusted_virtual_address;
+         last_virtual_address_end = last_virtual_address + image->sections[i].VirtualSize;
+         section_name = new_section_name;
+      }
 
    }
 
