@@ -553,27 +553,29 @@ int main(int argc, char **argv)
 {
    if (argc < 0)
       abort();
-   if (argc != 2) {
-      LOG("Bad number of arguments: expected 1 but got %d", argc - 1);
+   if (argc < 2) {
+      LOG("Bad number of arguments: expected at least 1 but got %d", argc - 1);
       return EXIT_FAILURE;
    }
-   int p = open(argv[1], O_RDONLY | O_CLOEXEC | O_NOCTTY);
-   struct stat buf;
-   if (fstat(p, &buf))
-      err(EXIT_FAILURE, "fstat(%s)", argv[1]);
-   if (buf.st_size > 0x7FFFFFFFL || buf.st_size < 0)
-      errx(EXIT_FAILURE, "file %s too long", argv[1]);
-   size_t size = (size_t)buf.st_size;
-   uint8_t *fbuf = malloc(size);
-   if (!fbuf)
-      err(1, "malloc(%zu)", size);
-   if ((size_t)read(p, fbuf, size) != size)
-      err(1, "read()");
-   struct ParsedImage image;
-   if (!parse_data(fbuf, size, &image))
-      errx(1, "bad PE file");
-   if (fflush(NULL) || ferror(stdout) || ferror(stderr))
-      errx(1, "I/O error");
-   free(fbuf);
-   close(p);
+   for (int i = 1; i < argc; ++i) {
+      int p = open(argv[i], O_RDONLY | O_CLOEXEC | O_NOCTTY);
+      struct stat buf;
+      if (fstat(p, &buf))
+         err(EXIT_FAILURE, "fstat(%s)", argv[i]);
+      if (buf.st_size > 0x7FFFFFFFL || buf.st_size < 0)
+         errx(EXIT_FAILURE, "file %s too long", argv[i]);
+      size_t size = (size_t)buf.st_size;
+      uint8_t *fbuf = malloc(size);
+      if (!fbuf)
+         err(1, "malloc(%zu)", size);
+      if ((size_t)read(p, fbuf, size) != size)
+         err(1, "read()");
+      struct ParsedImage image;
+      if (!parse_data(fbuf, size, &image))
+         errx(1, "bad PE file");
+      if (fflush(NULL) || ferror(stdout) || ferror(stderr))
+         errx(1, "I/O error");
+      free(fbuf);
+      close(p);
+   }
 }
