@@ -433,9 +433,8 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       }
       uint64_t const untrusted_virtual_address = image->sections[i].VirtualAddress + image->image_base;
       if (untrusted_virtual_address & (image->section_alignment - 1)) {
-         LOG("VMA not aligned: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
-             untrusted_virtual_address, image->section_alignment);
-         return false;
+         LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
+             i, image->sections[i].Name, untrusted_virtual_address, image->section_alignment);
       }
       if (max_address - untrusted_virtual_address < image->sections[i].VirtualSize) {
          LOG("Virtual address overflow: 0x%" PRIx64 " + 0x%" PRIx32 " > 0x%" PRIx64,
