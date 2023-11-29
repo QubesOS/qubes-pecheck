@@ -510,7 +510,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
 
       /* Alignment is guaranteed initially because signature_offset was checked to equal
        * last_section_start, and last_section_start must be a multiple of file_alignment.
-       * file_alignment, in turn, must be at least 512 and a power of 2.  Alignment will
+       * file_alignment, in turn, must be at least 32 and a power of 2.  Alignment will
        * be maintained because sig->length must be a multiple of 8.
        */
       do {
