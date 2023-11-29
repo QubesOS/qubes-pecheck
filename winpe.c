@@ -555,12 +555,6 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
          signature_offset += sig->length;
          signature_size -= sig->length;
       } while (signature_size > 0);
-
-      if (signature_offset != len) {
-         LOG("%" PRIu32 " bytes of junk after signatures",
-             (uint32_t)(len - signature_offset));
-         return false;
-      }
    }
    return true;
 }
