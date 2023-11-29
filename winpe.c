@@ -303,6 +303,10 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       untrusted_size_of_headers = untrusted_pe_header->pe32p.OptionalHeader.SizeOfHeaders;
       untrusted_number_of_directory_entries = untrusted_pe_header->pe32p.OptionalHeader.NumberOfRvaAndSizes;
       max_address = UINT64_MAX;
+   } else if (untrusted_pe_header->shared.Magic == 0xb20 ||
+              untrusted_pe_header->shared.Magic == 0xb10) {
+      LOG("Optional header indicates endian-swapped file (not implemented) %" PRIu16, untrusted_pe_header->shared.Magic);
+      return false;
    } else {
       LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->shared.Magic);
       return false;
