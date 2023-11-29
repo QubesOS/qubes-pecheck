@@ -186,26 +186,23 @@ validate_section_name(const IMAGE_SECTION_HEADER *section)
 static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
 {
    union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
-   if (untrusted_pe_header == NULL)
-      return NULL;
+   if (untrusted_pe_header == NULL) {
+      return false;
+   }
 
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
    uint32_t const nt_len = (uint32_t)len - nt_header_offset;
    const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_pe_header->shared.FileHeader;
-#if 0
-   if (!(untrusted_file_header->Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) {
+   if (!(untrusted_file_header->Characteristics & 0x2)) {
       LOG("File is not executable");
       return false;
    }
-   if (untrusted_file_header->Characteristics & IMAGE_FILE_RELOCS_STRIPPED) {
-      LOG("DLL cannot be executable");
-      return false;
+   if (untrusted_file_header->Characteristics & 0x1) {
+      LOG("Relocations stripped from image");
    }
-   if (untrusted_file_header->Characteristics & IMAGE_FILE_DLL) {
+   if (untrusted_file_header->Characteristics & 0x2000) {
       LOG("DLL cannot be executable");
-      return false;
    }
-#endif
    if (untrusted_file_header->PointerToSymbolTable ||
        untrusted_file_header->NumberOfSymbols) {
       LOG("COFF symbol tables detected: symbol table offset 0x%" PRIx32
