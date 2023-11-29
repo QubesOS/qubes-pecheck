@@ -402,18 +402,23 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       }
       if (image->sections[i].PointerToRawData != 0) {
          if (image->sections[i].PointerToRawData != last_section_start) {
-            LOG("Unexpected padding: 0x%" PRIx32 " != 0x%" PRIx32,
-                image->sections[i].PointerToRawData, last_section_start);
+            LOG("Section %" PRIu32 " starts at 0x%" PRIx32 ", but %s at 0x%" PRIx32,
+                i, image->sections[i].PointerToRawData,
+                i > 0 ? "previous section ends" : "NT headers end",
+                last_section_start);
             return false;
          }
       } else {
          if (image->sections[i].SizeOfRawData != 0) {
-            LOG("Section starts at zero but has nonzero size");
+            LOG("Section %" PRIu32 " starts at zero but has nonzero size", i);
             return false;
          }
       }
       if (len - last_section_start < image->sections[i].SizeOfRawData) {
-         LOG("Section too long");
+         LOG("Section %" PRIu32 " too long: length is %" PRIu32 " but only %" PRIu32
+             " bytes remaining in file", i,
+             image->sections[i].SizeOfRawData,
+             (uint32_t)(len - last_section_start));
          return false;
       }
       last_section_start += image->sections[i].SizeOfRawData;
