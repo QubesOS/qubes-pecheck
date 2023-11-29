@@ -35,7 +35,7 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
 
 #define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
 
-#define MIN_FILE_ALIGNMENT (UINT32_C(512))
+#define MIN_FILE_ALIGNMENT (UINT32_C(32))
 #define MIN_OPTIONAL_HEADER_SIZE (OPTIONAL_HEADER_OFFSET32 + offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory))
 #define MAX_OPTIONAL_HEADER_SIZE (sizeof(IMAGE_OPTIONAL_HEADER64))
 
@@ -56,8 +56,8 @@ validate_image_base_and_alignment(uint64_t const image_base,
     * The specification requires 512, but the Xen PE loader has 32 here,
     * and 32 is enough for all the casts to be well-defined.
     */
-   if (file_alignment < 32) {
-      LOG("File alignment too small (0x%" PRIx32 " < 0x%x)", file_alignment, 32);
+   if (file_alignment < MIN_FILE_ALIGNMENT) {
+      LOG("File alignment too small (0x%" PRIx32 " < 0x%x)", file_alignment, MIN_FILE_ALIGNMENT);
       return false;
    }
    if (file_alignment > (1U << 16)) {
@@ -94,9 +94,10 @@ validate_image_base_and_alignment(uint64_t const image_base,
 static const union PeHeader*
 extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
-   static_assert(sizeof(struct IMAGE_DOS_HEADER) < sizeof(IMAGE_NT_HEADERS64),
+   union PeHeader const* retval;
+   static_assert(sizeof(struct IMAGE_DOS_HEADER) < sizeof(*retval),
                  "NT header shorter than DOS header?");
-   static_assert(sizeof(struct IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS64) <= MIN_FILE_ALIGNMENT,
+   static_assert(sizeof(struct IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS64) <= 512,
                  "headers too long");
 
    if (len > 0x7FFFFFFFUL) {
@@ -104,8 +105,8 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
       return NULL;
    }
 
-   if (len < MIN_FILE_ALIGNMENT) {
-      LOG("Too short (min length 512, got %zu)", len);
+   if (len < sizeof(*retval)) {
+      LOG("Too short (min length %zu, got %zu)", sizeof(*retval), len);
       return NULL;
    }
 
@@ -114,7 +115,6 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
       return NULL;
    }
 
-   union PeHeader const* retval;
    if (ptr[0] == 'M' && ptr[1] == 'Z') {
       /* Skip past DOS header */
       uint32_t const nt_header_offset = ((const struct IMAGE_DOS_HEADER *)ptr)->e_lfanew;
@@ -125,7 +125,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
-      if (nt_header_offset > len - MIN_FILE_ALIGNMENT) {
+      if (nt_header_offset > len - sizeof(*retval)) {
          LOG("NT header does not leave room for section (offset %" PRIi32 ", file size %zu)",
              nt_header_offset, len);
          return NULL;
