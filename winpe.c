@@ -136,6 +136,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
+      LOG("Skipping DOS header of %" PRIu32 " bytes", nt_header_offset);
       retval = (const union PeHeader *)(ptr + nt_header_offset);
    } else {
       retval = (const union PeHeader *)ptr;
