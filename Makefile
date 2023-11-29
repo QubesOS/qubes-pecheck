@@ -8,7 +8,7 @@ ifneq "$(CC)" "gcc"
 	-Wno-language-extension-token -std=c2x -Wno-pre-c2x-compat -D_GNU_SOURCE=1 -- winpe.c
 else
 	gcc -D_FORTIFY_SOURCE=2 -fcf-protection=full -mstack-protector-guard=tls \
-	-fstack-check=specific \
+	-fstack-check=specific -Wformat=2 \
 	-Wl,-z,relro,-z,now -fPIC -owinpe -O2 -Wall -Wextra -Werror \
 	winpe.c
 endif
