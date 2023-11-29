@@ -483,6 +483,11 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       } else {
          LOG("File is not signed");
       }
+      if (len != last_section_start) {
+         LOG("%" PRIu32 " bytes of junk after sections",
+             (uint32_t)(len - last_section_start));
+         return false;
+      }
    } else {
       /* sanitize signature offset and size start */
       if (untrusted_signature_offset != last_section_start) {
@@ -544,6 +549,12 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
          signature_offset += sig->length;
          signature_size -= sig->length;
       } while (signature_size > 0);
+
+      if (signature_offset != len) {
+         LOG("%" PRIu32 " bytes of junk after signatures",
+             (uint32_t)(len - signature_offset));
+         return false;
+      }
    }
    return true;
 }
