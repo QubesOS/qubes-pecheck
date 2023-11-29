@@ -110,7 +110,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
       return NULL;
    }
 
-   if ((uintptr_t)ptr & 7) {
+   if ((uintptr_t)(const void *)ptr & 7) {
       LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
       return NULL;
    }
