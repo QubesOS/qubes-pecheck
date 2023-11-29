@@ -376,11 +376,15 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint64_t last_virtual_address = 0;
    uint64_t last_virtual_address_end = 0;
    for (uint32_t i = 0; i < number_of_sections; ++i) {
-      if (image->sections[i].PointerToRelocations ||
-          image->sections[i].PointerToLineNumbers ||
-          image->sections[i].NumberOfRelocations ||
-          image->sections[i].NumberOfLineNumbers) {
-         LOG("Invalid field set in image section");
+      if (image->sections[i].PointerToRelocations != 0 ||
+          image->sections[i].NumberOfRelocations != 0) {
+         LOG("Section %" PRIu32 " contains COFF relocations", i);
+         return false;
+      }
+
+      if (image->sections[i].PointerToLineNumbers != 0 ||
+          image->sections[i].NumberOfLineNumbers != 0) {
+         LOG("Section %" PRIu32 " contains COFF line numbers", i);
          return false;
       }
 
