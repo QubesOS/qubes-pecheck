@@ -483,20 +483,27 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       } else {
          LOG("File is not signed");
       }
-      if (len != last_section_start) {
-         LOG("%" PRIu32 " bytes of junk after sections",
-             (uint32_t)(len - last_section_start));
-         return false;
-      }
    } else {
       /* sanitize signature offset and size start */
-      if (untrusted_signature_offset != last_section_start) {
+      if (untrusted_signature_offset < last_section_start) {
          LOG("Signature does not start immediately after last section (%" PRIu32 " != %" PRIu32 ")",
                untrusted_signature_offset, last_section_start);
          return false;
       }
 
-      if (untrusted_signature_size > len - last_section_start) {
+      if (untrusted_signature_offset > len) {
+         LOG("Signature starts after end of file: %" PRIu32 " > %zu",
+             untrusted_signature_offset, len);
+         return false;
+      }
+
+      if ((untrusted_signature_offset & 7) != 0) {
+         LOG("Signature is misaligned (%" PRIu32 " is not a multiple of 8)",
+               untrusted_signature_offset);
+         return false;
+      }
+
+      if (untrusted_signature_size > len - untrusted_signature_offset) {
          LOG("Signature too large (got 0x%" PRIx32 "but only 0x%zu bytes left in file)",
                untrusted_signature_size, len - last_section_start);
          return false;
@@ -512,10 +519,9 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       uint32_t signature_size = untrusted_signature_size;
       /* sanitize signature offset and size end */
 
-      /* Alignment is guaranteed initially because signature_offset was checked to equal
-       * last_section_start, and last_section_start must be a multiple of file_alignment.
-       * file_alignment, in turn, must be at least 32 and a power of 2.  Alignment will
-       * be maintained because sig->length must be a multiple of 8.
+      /* Alignment is guaranteed initially because signature_offset was checked to be a
+       * multiple of 8.  Alignment will be maintained because sig->length must be a
+       * multiple of 8.
        */
       do {
          if (signature_size < sizeof(struct WIN_CERTIFICATE)) {
