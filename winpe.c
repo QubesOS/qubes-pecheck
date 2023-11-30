@@ -183,16 +183,12 @@ validate_section_name(const IMAGE_SECTION_HEADER *section)
    return true;
 }
 
-static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
+static bool validate_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
+                                 uint32_t nt_len,
+                                 uint32_t *optional_header_size,
+                                 uint32_t *nt_header_size,
+                                 uint32_t *number_of_sections)
 {
-   union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
-   if (untrusted_pe_header == NULL) {
-      return false;
-   }
-
-   uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
-   uint32_t const nt_len = (uint32_t)len - nt_header_offset;
-   const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_pe_header->shared.FileHeader;
    if (!(untrusted_file_header->Characteristics & 0x2)) {
       LOG("File is not executable");
       return false;
@@ -232,7 +228,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           untrusted_file_header->SizeOfOptionalHeader);
       return false;
    }
-   uint32_t const optional_header_size = untrusted_file_header->SizeOfOptionalHeader;
+   *optional_header_size = untrusted_file_header->SizeOfOptionalHeader;
    /* sanitize SizeOfOptionalHeader end */
 
    /* sanitize NumberOfSections start */
@@ -253,20 +249,34 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
     */
    uint32_t const untrusted_nt_headers_size =
       (untrusted_file_header->NumberOfSections * (uint32_t)sizeof(IMAGE_SECTION_HEADER)) +
-      ((uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
+      ((uint32_t)OPTIONAL_HEADER_OFFSET32 + *optional_header_size);
    /* sanitize NT headers size start */
    if (nt_len <= untrusted_nt_headers_size) {
       LOG("Section headers do not fit in image");
       return false;
    }
-   uint32_t const nt_header_size = untrusted_nt_headers_size;
+   *nt_header_size = untrusted_nt_headers_size;
    /* sanitize NT headers size end */
-
-   /* we now know that NumberOfSections is okay */
-   uint32_t const number_of_sections = untrusted_file_header->NumberOfSections;
+   *number_of_sections = untrusted_file_header->NumberOfSections;
    /* sanitize NumberOfSections end */
 
-   image->n_sections = number_of_sections;
+   return true;
+}
+
+static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
+{
+   union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
+   if (untrusted_pe_header == NULL) {
+      return false;
+   }
+
+   uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
+   uint32_t const nt_len = (uint32_t)len - nt_header_offset;
+   const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_pe_header->shared.FileHeader;
+   uint32_t nt_header_size, optional_header_size;
+   if (!validate_file_header(untrusted_file_header, nt_len, &optional_header_size, &nt_header_size, &image->n_sections))
+      return false;
+
    image->sections = (const IMAGE_SECTION_HEADER *)
       ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
 
@@ -381,7 +391,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint64_t last_virtual_address = 0;
    uint64_t last_virtual_address_end = 0;
    const uint8_t *section_name = NULL, *new_section_name = NULL;
-   for (uint32_t i = 0; i < number_of_sections; ++i) {
+   for (uint32_t i = 0; i < image->n_sections; ++i) {
       if (image->sections[i].PointerToRelocations != 0 ||
           image->sections[i].NumberOfRelocations != 0) {
          LOG("Section %" PRIu32 " contains COFF relocations", i);
