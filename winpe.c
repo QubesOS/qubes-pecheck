@@ -432,6 +432,12 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
                 last_section_start);
             return false;
          }
+         if (image->sections[i].SizeOfRawData != image->sections[i].VirtualSize) {
+            LOG("Section %" PRIu32 " has size 0x%" PRIx32 " in the file, but "
+                "0x%" PRIx32 " in memory", i, image->sections[i].SizeOfRawData,
+                image->sections[i].VirtualSize);
+            return false;
+         }
          last_section_start += image->sections[i].SizeOfRawData;
       } else {
          if (image->sections[i].SizeOfRawData != 0) {
