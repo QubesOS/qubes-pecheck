@@ -394,15 +394,22 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       new_section_name = image->sections[i].Name;
 
       /* Validate PointerToRawData and SizeOfRawData */
-      if (image->sections[i].PointerToRawData & (image->file_alignment - 1)) {
-         LOG("Misaligned raw data pointer");
-         return false;
-      }
-      if (image->sections[i].SizeOfRawData & (image->file_alignment - 1)) {
-         LOG("Misaligned raw data size");
-         return false;
-      }
       if (image->sections[i].PointerToRawData != 0) {
+         if (len - last_section_start < image->sections[i].SizeOfRawData) {
+            LOG("Section %" PRIu32 " too long: length is %" PRIu32 " but only %" PRIu32
+                  " bytes remaining in file", i,
+                  image->sections[i].SizeOfRawData,
+                  (uint32_t)(len - last_section_start));
+            return false;
+         }
+         if (image->sections[i].PointerToRawData & (image->file_alignment - 1)) {
+            LOG("Misaligned raw data pointer");
+            return false;
+         }
+         if (image->sections[i].SizeOfRawData & (image->file_alignment - 1)) {
+            LOG("Misaligned raw data size");
+            return false;
+         }
          if (image->sections[i].PointerToRawData != last_section_start) {
             LOG("Section %" PRIu32 " starts at 0x%" PRIx32 ", but %s at 0x%" PRIx32,
                 i, image->sections[i].PointerToRawData,
@@ -410,20 +417,13 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
                 last_section_start);
             return false;
          }
+         last_section_start += image->sections[i].SizeOfRawData;
       } else {
          if (image->sections[i].SizeOfRawData != 0) {
             LOG("Section %" PRIu32 " starts at zero but has nonzero size", i);
             return false;
          }
       }
-      if (len - last_section_start < image->sections[i].SizeOfRawData) {
-         LOG("Section %" PRIu32 " too long: length is %" PRIu32 " but only %" PRIu32
-             " bytes remaining in file", i,
-             image->sections[i].SizeOfRawData,
-             (uint32_t)(len - last_section_start));
-         return false;
-      }
-      last_section_start += image->sections[i].SizeOfRawData;
 
       /* Validate VirtualAddress and VirtualSize */
       if (image->sections[i].VirtualAddress > image_address_space) {
