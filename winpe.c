@@ -210,6 +210,11 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           untrusted_file_header->PointerToSymbolTable,
           untrusted_file_header->NumberOfSymbols);
    }
+   /*
+    * FIXME: sanitize symbol table.  Note that if the file is signed,
+    * these pointers must be offset by the contents of the certificate
+    * table, as signing the file will change them.
+    */
 
    /* sanitize SizeOfOptionalHeader start */
    if (untrusted_file_header->SizeOfOptionalHeader < MIN_OPTIONAL_HEADER_SIZE) {
