@@ -359,11 +359,6 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           untrusted_size_of_headers, nt_header_end);
       return false;
    }
-   if (untrusted_size_of_headers - nt_header_end >= image->file_alignment) {
-      LOG("Too much padding after section headers: got 0x%" PRIx32 " but limit is 0x%" PRIx32,
-          untrusted_size_of_headers - nt_header_end, image->file_alignment);
-      return false;
-   }
    image->size_of_headers = untrusted_size_of_headers;
    /* sanitize SizeOfHeaders end */
 
