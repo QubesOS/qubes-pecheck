@@ -271,18 +271,19 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    }
 
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
-   uint32_t const nt_len = (uint32_t)len - nt_header_offset;
    uint32_t nt_header_size, optional_header_size;
-   if (!validate_file_header(&untrusted_pe_header->shared.FileHeader, nt_len, &optional_header_size, &nt_header_size, &image->n_sections))
+   if (!validate_file_header(&untrusted_pe_header->shared.FileHeader,
+                             len - nt_header_offset,
+                             &optional_header_size,
+                             &nt_header_size,
+                             &image->n_sections)) {
       return false;
+   }
 
    image->sections = (const IMAGE_SECTION_HEADER *)
       ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
 
-   /*
-    * Overflow is impossible because nt_header_size is less than nt_len,
-    * and nt_len + nt_header_offset is equal to len.
-    */
+   /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
    uint32_t const nt_header_end = nt_header_size + nt_header_offset;
 
    uint64_t untrusted_image_base;
