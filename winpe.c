@@ -272,9 +272,8 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
 
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
    uint32_t const nt_len = (uint32_t)len - nt_header_offset;
-   const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_pe_header->shared.FileHeader;
    uint32_t nt_header_size, optional_header_size;
-   if (!validate_file_header(untrusted_file_header, nt_len, &optional_header_size, &nt_header_size, &image->n_sections))
+   if (!validate_file_header(&untrusted_pe_header->shared.FileHeader, nt_len, &optional_header_size, &nt_header_size, &image->n_sections))
       return false;
 
    image->sections = (const IMAGE_SECTION_HEADER *)
