@@ -296,11 +296,11 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    uint32_t min_size_of_optional_header;
    uint64_t max_address;
 
-   if (untrusted_pe_header->shared.Magic == 0x10b) {
+   switch (untrusted_pe_header->shared.Magic) {
+   case 0x10b:
       LOG("This is a PE32 file: magic 0x10b");
       static_assert(offsetof(IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
-      static_assert(offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96,
-                    "wrong size");
+      static_assert(offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96, "wrong size");
       min_size_of_optional_header = offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory);
       untrusted_image_base = untrusted_pe_header->pe32.OptionalHeader.ImageBase;
       untrusted_file_alignment = untrusted_pe_header->pe32.OptionalHeader.FileAlignment;
@@ -308,11 +308,11 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       untrusted_size_of_headers = untrusted_pe_header->pe32.OptionalHeader.SizeOfHeaders;
       untrusted_number_of_directory_entries = untrusted_pe_header->pe32.OptionalHeader.NumberOfRvaAndSizes;
       max_address = UINT32_MAX;
-   } else if (untrusted_pe_header->shared.Magic == 0x20b) {
+      break;
+   case 0x20b:
       LOG("This is a PE32+ file: magic 0x20b");
       static_assert(offsetof(IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
-      static_assert(offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112,
-                    "wrong size");
+      static_assert(offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112, "wrong size");
       min_size_of_optional_header = offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory);
       untrusted_image_base = untrusted_pe_header->pe32p.OptionalHeader.ImageBase;
       untrusted_file_alignment = untrusted_pe_header->pe32p.OptionalHeader.FileAlignment;
@@ -320,11 +320,13 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       untrusted_size_of_headers = untrusted_pe_header->pe32p.OptionalHeader.SizeOfHeaders;
       untrusted_number_of_directory_entries = untrusted_pe_header->pe32p.OptionalHeader.NumberOfRvaAndSizes;
       max_address = UINT64_MAX;
-   } else if (untrusted_pe_header->shared.Magic == 0xb20 ||
-              untrusted_pe_header->shared.Magic == 0xb10) {
-      LOG("Optional header indicates endian-swapped file (not implemented) %" PRIu16, untrusted_pe_header->shared.Magic);
+      break;
+   case 0xb20:
+   case 0xb10:
+      LOG("Optional header indicates endian-swapped file (not implemented) %" PRIu16,
+          untrusted_pe_header->shared.Magic);
       return false;
-   } else {
+   default:
       LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->shared.Magic);
       return false;
    }
