@@ -183,12 +183,14 @@ validate_section_name(const IMAGE_SECTION_HEADER *section)
    return true;
 }
 
-static bool validate_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
-                                 uint32_t nt_len,
-                                 uint32_t *optional_header_size,
-                                 uint32_t *nt_header_size,
-                                 uint32_t *number_of_sections)
+static bool parse_file_header(const union PeHeader *untrusted_pe_header,
+                              uint32_t nt_len,
+                              uint32_t *nt_header_size,
+                              uint32_t *number_of_sections,
+                              const IMAGE_SECTION_HEADER **sections,
+                              uint32_t *optional_header_size)
 {
+   const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_pe_header->shared.FileHeader;
    if (!(untrusted_file_header->Characteristics & 0x2)) {
       LOG("File is not executable");
       return false;
@@ -261,6 +263,8 @@ static bool validate_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
    /* sanitize NT headers size end */
    *number_of_sections = NumberOfSections;
    /* sanitize NumberOfSections end */
+   *sections = (const IMAGE_SECTION_HEADER *)
+      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + *optional_header_size);
 
    return true;
 }
@@ -274,16 +278,14 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
 
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
    uint32_t nt_header_size, optional_header_size;
-   if (!validate_file_header(&untrusted_pe_header->shared.FileHeader,
-                             len - nt_header_offset,
-                             &optional_header_size,
-                             &nt_header_size,
-                             &image->n_sections)) {
+   if (!parse_file_header(untrusted_pe_header,
+                          (uint32_t)len - nt_header_offset,
+                          &nt_header_size,
+                          &image->n_sections,
+                          &image->sections,
+                          &optional_header_size)) {
       return false;
    }
-
-   image->sections = (const IMAGE_SECTION_HEADER *)
-      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + optional_header_size);
 
    /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
    uint32_t const nt_header_end = nt_header_size + nt_header_offset;
