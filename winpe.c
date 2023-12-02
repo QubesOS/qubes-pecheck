@@ -213,32 +213,34 @@ static bool validate_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
     */
 
    /* sanitize SizeOfOptionalHeader start */
-   if (untrusted_file_header->SizeOfOptionalHeader < MIN_OPTIONAL_HEADER_SIZE) {
+   uint32_t const SizeOfOptionalHeader = untrusted_file_header->SizeOfOptionalHeader;
+   if (SizeOfOptionalHeader < MIN_OPTIONAL_HEADER_SIZE) {
       LOG("Optional header too short: got %" PRIu32 " but minimum is %zu",
-          untrusted_file_header->SizeOfOptionalHeader, MIN_OPTIONAL_HEADER_SIZE);
+          SizeOfOptionalHeader, MIN_OPTIONAL_HEADER_SIZE);
       return false;
    }
-   if (untrusted_file_header->SizeOfOptionalHeader > MAX_OPTIONAL_HEADER_SIZE) {
+   if (SizeOfOptionalHeader > MAX_OPTIONAL_HEADER_SIZE) {
       LOG("Optional header too long: got %" PRIu32 " but maximum is %zu",
-          untrusted_file_header->SizeOfOptionalHeader, MAX_OPTIONAL_HEADER_SIZE);
+          SizeOfOptionalHeader, MAX_OPTIONAL_HEADER_SIZE);
       return false;
    }
-   if (untrusted_file_header->SizeOfOptionalHeader & 7) {
+   if (SizeOfOptionalHeader & 7) {
       LOG("Optional header size 0x%" PRIx16 " not multiple of 8",
-          untrusted_file_header->SizeOfOptionalHeader);
+          SizeOfOptionalHeader);
       return false;
    }
-   *optional_header_size = untrusted_file_header->SizeOfOptionalHeader;
+   *optional_header_size = SizeOfOptionalHeader;
    /* sanitize SizeOfOptionalHeader end */
 
    /* sanitize NumberOfSections start */
-   if (untrusted_file_header->NumberOfSections < 1) {
+   uint32_t const NumberOfSections = untrusted_file_header->NumberOfSections;
+   if (NumberOfSections < 1) {
       LOG("No sections!");
       return false;
    }
 
-   if (untrusted_file_header->NumberOfSections > 96) {
-      LOG("Too many sections: got %" PRIu16 ", limit 96", untrusted_file_header->NumberOfSections);
+   if (NumberOfSections > 96) {
+      LOG("Too many sections: got %" PRIu16 ", limit 96", NumberOfSections);
       return false;
    }
 
@@ -248,7 +250,7 @@ static bool validate_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
     * Therefore, the maximum is 40 * 96 + 112 + 16 * 8 = 4080 bytes.
     */
    uint32_t const untrusted_nt_headers_size =
-      (untrusted_file_header->NumberOfSections * (uint32_t)sizeof(IMAGE_SECTION_HEADER)) +
+      (NumberOfSections * (uint32_t)sizeof(IMAGE_SECTION_HEADER)) +
       ((uint32_t)OPTIONAL_HEADER_OFFSET32 + *optional_header_size);
    /* sanitize NT headers size start */
    if (nt_len <= untrusted_nt_headers_size) {
@@ -257,7 +259,7 @@ static bool validate_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
    }
    *nt_header_size = untrusted_nt_headers_size;
    /* sanitize NT headers size end */
-   *number_of_sections = untrusted_file_header->NumberOfSections;
+   *number_of_sections = NumberOfSections;
    /* sanitize NumberOfSections end */
 
    return true;
