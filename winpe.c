@@ -36,7 +36,7 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
 #define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
 
 #define MIN_FILE_ALIGNMENT (UINT32_C(32))
-#define MIN_OPTIONAL_HEADER_SIZE (OPTIONAL_HEADER_OFFSET32 + offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory))
+#define MIN_OPTIONAL_HEADER_SIZE (offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory))
 #define MAX_OPTIONAL_HEADER_SIZE (sizeof(IMAGE_OPTIONAL_HEADER64))
 
 static bool
