@@ -265,35 +265,18 @@ static bool parse_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
    return true;
 }
 
-static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
-{
-   union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
-   if (untrusted_pe_header == NULL) {
-      return false;
-   }
-
-   uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
-   uint32_t nt_header_size, optional_header_size;
-   if (!parse_file_header(&untrusted_pe_header->shared.FileHeader,
-                          (uint32_t)len - nt_header_offset,
-                          &nt_header_size,
-                          &image->n_sections,
-                          &optional_header_size)) {
-      return false;
-   }
-   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET32;
-   image->sections = (IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
-
-   /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
-   uint32_t const nt_header_end = nt_header_size + nt_header_offset;
-
+static bool parse_optional_header(union PeHeader const *const untrusted_pe_header,
+                                  struct ParsedImage *const image,
+                                  uint32_t len,
+                                  uint32_t nt_header_end,
+                                  uint32_t optional_header_size,
+                                  uint64_t *max_address) {
    uint64_t untrusted_image_base;
    uint32_t untrusted_file_alignment;
    uint32_t untrusted_section_alignment;
    uint32_t untrusted_size_of_headers;
    uint32_t untrusted_number_of_directory_entries;
    uint32_t min_size_of_optional_header;
-   uint64_t max_address;
 
    switch (untrusted_pe_header->shared.Magic) {
    case 0x10b:
@@ -306,7 +289,8 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       untrusted_section_alignment = untrusted_pe_header->pe32.OptionalHeader.SectionAlignment;
       untrusted_size_of_headers = untrusted_pe_header->pe32.OptionalHeader.SizeOfHeaders;
       untrusted_number_of_directory_entries = untrusted_pe_header->pe32.OptionalHeader.NumberOfRvaAndSizes;
-      max_address = UINT32_MAX;
+      image->directory = untrusted_pe_header->pe32.OptionalHeader.DataDirectory;
+      *max_address = UINT32_MAX;
       break;
    case 0x20b:
       LOG("This is a PE32+ file: magic 0x20b");
@@ -318,7 +302,8 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       untrusted_section_alignment = untrusted_pe_header->pe32p.OptionalHeader.SectionAlignment;
       untrusted_size_of_headers = untrusted_pe_header->pe32p.OptionalHeader.SizeOfHeaders;
       untrusted_number_of_directory_entries = untrusted_pe_header->pe32p.OptionalHeader.NumberOfRvaAndSizes;
-      max_address = UINT64_MAX;
+      image->directory = untrusted_pe_header->pe32p.OptionalHeader.DataDirectory;
+      *max_address = UINT64_MAX;
       break;
    case 0xb20:
    case 0xb10:
@@ -366,12 +351,6 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
    image->size_of_headers = untrusted_size_of_headers;
    /* sanitize SizeOfHeaders end */
 
-   for (uint32_t i = nt_header_end; i < image->size_of_headers; ++i) {
-      if (ptr[i]) {
-         LOG("Non-zero byte at offset 0x%" PRIx32 " that should be zero", i);
-         return false;
-      }
-   }
    uint32_t const expected_optional_header_size =
       image->directory_entries * sizeof(IMAGE_DATA_DIRECTORY) +
       min_size_of_optional_header;
@@ -380,8 +359,46 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           optional_header_size, expected_optional_header_size);
       return false;
    }
-   image->directory = (const IMAGE_DATA_DIRECTORY *)(optional_header + min_size_of_optional_header);
 
+   return true;
+}
+
+
+static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
+{
+   union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
+   if (untrusted_pe_header == NULL) {
+      return false;
+   }
+
+   uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
+   uint32_t nt_header_size, optional_header_size;
+   if (!parse_file_header(&untrusted_pe_header->shared.FileHeader,
+                          (uint32_t)len - nt_header_offset,
+                          &nt_header_size,
+                          &image->n_sections,
+                          &optional_header_size)) {
+      return false;
+   }
+   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET32;
+   image->sections = (const IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
+
+   /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
+   uint32_t const nt_header_end = nt_header_size + nt_header_offset;
+   uint64_t max_address;
+   if (!parse_optional_header(untrusted_pe_header,
+                              image,
+                              (uint32_t)len,
+                              nt_header_end,
+                              optional_header_size,
+                              &max_address))
+      return false;
+   for (uint32_t i = nt_header_end; i < image->size_of_headers; ++i) {
+      if (ptr[i]) {
+         LOG("Non-zero byte at offset 0x%" PRIx32 " that should be zero", i);
+         return false;
+      }
+   }
    /* Overflow is impossible: max_address is always at least as large as image->image_base */
    uint64_t const image_address_space = max_address - image->image_base;
    uint32_t last_section_start = image->size_of_headers;
