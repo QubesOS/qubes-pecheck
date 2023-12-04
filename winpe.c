@@ -183,14 +183,12 @@ validate_section_name(const IMAGE_SECTION_HEADER *section)
    return true;
 }
 
-static bool parse_file_header(const union PeHeader *untrusted_pe_header,
+static bool parse_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
                               uint32_t nt_len,
                               uint32_t *nt_header_size,
                               uint32_t *number_of_sections,
-                              const IMAGE_SECTION_HEADER **sections,
                               uint32_t *optional_header_size)
 {
-   const IMAGE_FILE_HEADER *untrusted_file_header = &untrusted_pe_header->shared.FileHeader;
    if (!(untrusted_file_header->Characteristics & 0x2)) {
       LOG("File is not executable");
       return false;
@@ -231,8 +229,6 @@ static bool parse_file_header(const union PeHeader *untrusted_pe_header,
           SizeOfOptionalHeader);
       return false;
    }
-   *optional_header_size = SizeOfOptionalHeader;
-   /* sanitize SizeOfOptionalHeader end */
 
    /* sanitize NumberOfSections start */
    uint32_t const NumberOfSections = untrusted_file_header->NumberOfSections;
@@ -253,18 +249,18 @@ static bool parse_file_header(const union PeHeader *untrusted_pe_header,
     */
    uint32_t const untrusted_nt_headers_size =
       (NumberOfSections * (uint32_t)sizeof(IMAGE_SECTION_HEADER)) +
-      ((uint32_t)OPTIONAL_HEADER_OFFSET32 + *optional_header_size);
+      ((uint32_t)OPTIONAL_HEADER_OFFSET32 + SizeOfOptionalHeader);
    /* sanitize NT headers size start */
    if (nt_len <= untrusted_nt_headers_size) {
       LOG("Section headers do not fit in image");
       return false;
    }
    *nt_header_size = untrusted_nt_headers_size;
-   /* sanitize NT headers size end */
    *number_of_sections = NumberOfSections;
+   *optional_header_size = SizeOfOptionalHeader;
+   /* sanitize NT headers size end */
+   /* sanitize SizeOfOptionalHeader end */
    /* sanitize NumberOfSections end */
-   *sections = (const IMAGE_SECTION_HEADER *)
-      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + *optional_header_size);
 
    return true;
 }
@@ -278,14 +274,15 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
 
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
    uint32_t nt_header_size, optional_header_size;
-   if (!parse_file_header(untrusted_pe_header,
+   if (!parse_file_header(&untrusted_pe_header->shared.FileHeader,
                           (uint32_t)len - nt_header_offset,
                           &nt_header_size,
                           &image->n_sections,
-                          &image->sections,
                           &optional_header_size)) {
       return false;
    }
+   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET32;
+   image->sections = (IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
 
    /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
    uint32_t const nt_header_end = nt_header_size + nt_header_offset;
@@ -383,8 +380,7 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
           optional_header_size, expected_optional_header_size);
       return false;
    }
-   image->directory = (const IMAGE_DATA_DIRECTORY *)
-      ((const uint8_t *)untrusted_pe_header + (uint32_t)OPTIONAL_HEADER_OFFSET32 + min_size_of_optional_header);
+   image->directory = (const IMAGE_DATA_DIRECTORY *)(optional_header + min_size_of_optional_header);
 
    /* Overflow is impossible: max_address is always at least as large as image->image_base */
    uint64_t const image_address_space = max_address - image->image_base;
