@@ -120,7 +120,7 @@ validate_section_name(const IMAGE_SECTION_HEADER *section)
          }
          for (uint8_t k = j + 1; k < sizeof(section->Name); ++k) {
             if (name[k] != '\0') {
-               LOG("Section name has NUL byte after non-NUL byte");
+               LOG("Section name has non-NUL byte after NUL byte");
                return false;
             }
          }
