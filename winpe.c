@@ -92,10 +92,12 @@ validate_image_base_and_alignment(uint64_t const image_base,
 static const union PeHeader*
 extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
+#define NT_HEADER_OFFSET_LOC UINT32_C(60)
+#define DOS_HEADER_SIZE (NT_HEADER_OFFSET_LOC + sizeof(uint32_t))
    union PeHeader const* retval;
-   static_assert(sizeof(struct IMAGE_DOS_HEADER) < sizeof(*retval),
+   static_assert(DOS_HEADER_SIZE < sizeof(*retval),
                  "NT header shorter than DOS header?");
-   static_assert(sizeof(struct IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS64) <= 512,
+   static_assert(DOS_HEADER_SIZE + sizeof(IMAGE_NT_HEADERS64) <= 512,
                  "headers too long");
 
    if (len > 0x7FFFFFFFUL) {
@@ -114,12 +116,14 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
    }
 
    if (ptr[0] == 'M' && ptr[1] == 'Z') {
+      uint32_t nt_header_offset;
+      static_assert(sizeof nt_header_offset == 4, "compiler bug");
       /* Skip past DOS header */
-      uint32_t const nt_header_offset = ((const struct IMAGE_DOS_HEADER *)ptr)->e_lfanew;
+      memcpy(&nt_header_offset, ptr + NT_HEADER_OFFSET_LOC, sizeof(uint32_t));
 
-      if (nt_header_offset < sizeof(struct IMAGE_DOS_HEADER)) {
-         LOG("DOS header overlaps NT header (%" PRIi32 " less than %zu)",
-             nt_header_offset, sizeof(struct IMAGE_DOS_HEADER));
+      if (nt_header_offset < DOS_HEADER_SIZE) {
+         LOG("DOS header overlaps NT header (%" PRIu32 " less than %zu)",
+             nt_header_offset, DOS_HEADER_SIZE);
          return NULL;
       }
 
