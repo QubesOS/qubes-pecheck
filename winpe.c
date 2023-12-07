@@ -37,53 +37,6 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
 #define MIN_OPTIONAL_HEADER_SIZE (offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory))
 #define MAX_OPTIONAL_HEADER_SIZE (sizeof(IMAGE_OPTIONAL_HEADER64))
 
-static bool
-validate_image_base_and_alignment(uint64_t const image_base,
-                                  uint32_t const file_alignment,
-                                  uint32_t const section_alignment)
-{
-   if (image_base % (1UL << 16)) {
-      LOG("Image base 0x%" PRIx64 " not multiple of 0x%x", image_base, 1U << 16);
-      return false;
-   }
-   if (section_alignment < (1U << 12)) {
-      LOG("Section alignment too small (0x%" PRIx32 " < 0x%x)", section_alignment, 1U << 12);
-      return false;
-   }
-   /*
-    * The specification requires 512, but the Xen PE loader has 32 here,
-    * and 32 is enough for all the casts to be well-defined.
-    */
-   if (file_alignment < MIN_FILE_ALIGNMENT) {
-      LOG("File alignment too small (0x%" PRIx32 " < 0x%x)", file_alignment, MIN_FILE_ALIGNMENT);
-      return false;
-   }
-   if (file_alignment > (1U << 16)) {
-      LOG("Too large file alignment (0x%" PRIx32 " > 0x%x)", file_alignment, 1U << 16);
-      return false;
-   }
-   if (file_alignment & (file_alignment - 1)) {
-      LOG("Non-power of 2 file alignment 0x%" PRIx32, file_alignment);
-      return false;
-   }
-   if (section_alignment < file_alignment) {
-      LOG("File alignment greater than section alignment (0x%" PRIx32 " > 0x%" PRIx32 ")",
-          file_alignment, section_alignment);
-      return false;
-   }
-   if (section_alignment & (section_alignment - 1)) {
-      LOG("Non-power of 2 section alignment 0x%" PRIx32, section_alignment);
-      return false;
-   }
-   if (image_base & (section_alignment - 1)) {
-      LOG("Image base 0x%" PRIx64 " not multiple of section alignment 0x%" PRIx32,
-          image_base, section_alignment);
-      return false;
-   }
-
-   return true;
-}
-
 /**
  * Extract the NT header, skipping over any DOS header.
  *
@@ -263,6 +216,53 @@ static bool parse_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
    /* sanitize NT headers size end */
    /* sanitize SizeOfOptionalHeader end */
    /* sanitize NumberOfSections end */
+
+   return true;
+}
+
+static bool
+validate_image_base_and_alignment(uint64_t const image_base,
+                                  uint32_t const file_alignment,
+                                  uint32_t const section_alignment)
+{
+   if (image_base % (1UL << 16)) {
+      LOG("Image base 0x%" PRIx64 " not multiple of 0x%x", image_base, 1U << 16);
+      return false;
+   }
+   if (section_alignment < (1U << 12)) {
+      LOG("Section alignment too small (0x%" PRIx32 " < 0x%x)", section_alignment, 1U << 12);
+      return false;
+   }
+   /*
+    * The specification requires 512, but the Xen PE loader has 32 here,
+    * and 32 is enough for all the casts to be well-defined.
+    */
+   if (file_alignment < MIN_FILE_ALIGNMENT) {
+      LOG("File alignment too small (0x%" PRIx32 " < 0x%x)", file_alignment, MIN_FILE_ALIGNMENT);
+      return false;
+   }
+   if (file_alignment > (1U << 16)) {
+      LOG("Too large file alignment (0x%" PRIx32 " > 0x%x)", file_alignment, 1U << 16);
+      return false;
+   }
+   if (file_alignment & (file_alignment - 1)) {
+      LOG("Non-power of 2 file alignment 0x%" PRIx32, file_alignment);
+      return false;
+   }
+   if (section_alignment < file_alignment) {
+      LOG("File alignment greater than section alignment (0x%" PRIx32 " > 0x%" PRIx32 ")",
+          file_alignment, section_alignment);
+      return false;
+   }
+   if (section_alignment & (section_alignment - 1)) {
+      LOG("Non-power of 2 section alignment 0x%" PRIx32, section_alignment);
+      return false;
+   }
+   if (image_base & (section_alignment - 1)) {
+      LOG("Image base 0x%" PRIx64 " not multiple of section alignment 0x%" PRIx32,
+          image_base, section_alignment);
+      return false;
+   }
 
    return true;
 }
