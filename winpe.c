@@ -33,8 +33,6 @@ static_assert(offsetof(IMAGE_NT_HEADERS64, FileHeader) == 4,
               "wrong definition of IMAGE_NT_HEADERS64");
 static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header");
 
-#define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
-
 #define MIN_FILE_ALIGNMENT (UINT32_C(32))
 #define MIN_OPTIONAL_HEADER_SIZE (offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory))
 #define MAX_OPTIONAL_HEADER_SIZE (sizeof(IMAGE_OPTIONAL_HEADER64))
@@ -364,7 +362,7 @@ static bool parse_optional_header(union PeHeader const *const untrusted_pe_heade
 }
 
 
-static bool parse_data(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
+bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
 {
    union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
    if (untrusted_pe_header == NULL) {
@@ -581,35 +579,4 @@ static bool parse_data(const uint8_t *const ptr, size_t const len, struct Parsed
       } while (signature_size > 0);
    }
    return true;
-}
-
-int main(int argc, char **argv)
-{
-   if (argc < 0)
-      abort();
-   if (argc < 2) {
-      LOG("Bad number of arguments: expected at least 1 but got %d", argc - 1);
-      return EXIT_FAILURE;
-   }
-   for (int i = 1; i < argc; ++i) {
-      int p = open(argv[i], O_RDONLY | O_CLOEXEC | O_NOCTTY);
-      struct stat buf;
-      if (fstat(p, &buf))
-         err(EXIT_FAILURE, "fstat(%s)", argv[i]);
-      if (buf.st_size > 0x7FFFFFFFL || buf.st_size < 0)
-         errx(EXIT_FAILURE, "file %s too long", argv[i]);
-      size_t size = (size_t)buf.st_size;
-      uint8_t *fbuf = malloc(size);
-      if (!fbuf)
-         err(1, "malloc(%zu)", size);
-      if ((size_t)read(p, fbuf, size) != size)
-         err(1, "read()");
-      struct ParsedImage image;
-      if (!parse_data(fbuf, size, &image))
-         errx(1, "bad PE file");
-      if (fflush(NULL) || ferror(stdout) || ferror(stderr))
-         errx(1, "I/O error");
-      free(fbuf);
-      close(p);
-   }
 }

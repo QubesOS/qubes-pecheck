@@ -1,4 +1,7 @@
 #include <stdint.h>
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 struct IMAGE_DOS_HEADER
 {
@@ -170,3 +173,8 @@ static const uint32_t pe_section_reserved_bits = 0xF6517;
 static const uint32_t pe_section_code = 0x20;
 static const uint32_t pe_section_initialized_data = 0x40;
 static const uint32_t pe_section_uninitialized_data = 0x80;
+
+bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image);
+
+#define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
+
