@@ -59,18 +59,8 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
    static_assert(DOS_HEADER_SIZE + sizeof(IMAGE_NT_HEADERS64) <= 512,
                  "headers too long");
 
-   if (len > 0x7FFFFFFFUL) {
-      LOG("Too long (max length 0x7FFFFFFF, got 0x%zx)", len);
-      return NULL;
-   }
-
    if (len < sizeof(*retval)) {
       LOG("Too short (min length %zu, got %zu)", sizeof(*retval), len);
-      return NULL;
-   }
-
-   if ((uintptr_t)(const void *)ptr & 7) {
-      LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
       return NULL;
    }
 
@@ -374,6 +364,16 @@ static bool parse_optional_header(union PeHeader const *const untrusted_pe_heade
 
 bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
 {
+   if (len > 0x7FFFFFFFUL) {
+      LOG("Too long (max length 0x7FFFFFFF, got 0x%zx)", len);
+      return NULL;
+   }
+
+   if ((uintptr_t)(const void *)ptr & 7) {
+      LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
+      return NULL;
+   }
+
    union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
    if (untrusted_pe_header == NULL) {
       return false;
