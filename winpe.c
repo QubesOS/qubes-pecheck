@@ -40,7 +40,13 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
 /**
  * Extract the NT header, skipping over any DOS header.
  *
- * \return The pointer on success, or NUL on failure.
+ * If this function returns a valid pointer, the entire NT header is
+ * guaranteed to be in bounds.  However, not all of it might actually be
+ * valid.  Accessing invalid members (such as a nonexistent data directory)
+ * will produce garbage from other parts of the PE file.  It will not
+ * result in undefined behavior or a * memory access violation.
+ *
+ * \return The pointer on success, or NULL on failure.
  */
 static const union PeHeader*
 extract_pe_header(const uint8_t *const ptr, size_t const len)
