@@ -80,7 +80,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
-      if (nt_header_offset & 7) {
+      if (!IS_ALIGNED(nt_header_offset, 8)) {
          LOG("NT header not 8-byte aligned (offset %" PRIi32 ")", nt_header_offset);
          return NULL;
       }
@@ -234,7 +234,7 @@ validate_image_base_and_alignment(uint64_t const image_base,
       LOG("Too large file alignment (0x%" PRIx32 " > 0x%x)", file_alignment, 1U << 16);
       return false;
    }
-   if (file_alignment & (file_alignment - 1)) {
+   if (!IS_POW2(file_alignment)) {
       LOG("Non-power of 2 file alignment 0x%" PRIx32, file_alignment);
       return false;
    }
@@ -243,11 +243,11 @@ validate_image_base_and_alignment(uint64_t const image_base,
           file_alignment, section_alignment);
       return false;
    }
-   if (section_alignment & (section_alignment - 1)) {
+   if (!IS_POW2(section_alignment)) {
       LOG("Non-power of 2 section alignment 0x%" PRIx32, section_alignment);
       return false;
    }
-   if (image_base & (section_alignment - 1)) {
+   if (!IS_ALIGNED(image_base, section_alignment)) {
       LOG("Image base 0x%" PRIx64 " not multiple of section alignment 0x%" PRIx32,
           image_base, section_alignment);
       return false;
@@ -307,9 +307,9 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
    }
 
    /* sanitize directory entry number start */
-   if (untrusted_number_of_directory_entries > 16) {
-      LOG("Too many NumberOfRvaAndSizes (got %" PRIu32 ", limit 16",
-          untrusted_number_of_directory_entries);
+   if (untrusted_number_of_directory_entries > EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES) {
+      LOG("Too many NumberOfRvaAndSizes (got %" PRIu32 ", limit %d",
+          untrusted_number_of_directory_entries, EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES);
       return false;
    }
    image->directory_entries = untrusted_number_of_directory_entries;
@@ -329,7 +329,7 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
           untrusted_size_of_headers, len);
       return false;
    }
-   if (untrusted_size_of_headers & (image->file_alignment - 1)) {
+   if (!IS_ALIGNED(untrusted_size_of_headers, image->file_alignment)) {
       LOG("Misaligned size of headers: got 0x%" PRIx32 " but alignment is 0x%" PRIx32,
           untrusted_size_of_headers, image->file_alignment);
       return false;
@@ -354,7 +354,6 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
    return true;
 }
 
-
 bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
 {
    if (len > 0x7FFFFFFFUL) {
@@ -362,7 +361,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       return NULL;
    }
 
-   if ((uintptr_t)(const void *)ptr & 7) {
+   if (!ADDRESS_IS_ALIGNED((const void *)ptr, 8)) {
       LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
       return NULL;
    }
@@ -437,11 +436,11 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                   (uint32_t)(len - last_section_start));
             return false;
          }
-         if (image->sections[i].PointerToRawData & (image->file_alignment - 1)) {
+         if (!IS_ALIGNED(image->sections[i].PointerToRawData, image->file_alignment)) {
             LOG("Misaligned raw data pointer");
             return false;
          }
-         if (image->sections[i].SizeOfRawData & (image->file_alignment - 1)) {
+         if (!IS_ALIGNED(image->sections[i].SizeOfRawData, image->file_alignment)) {
             LOG("Misaligned raw data size");
             return false;
          }
@@ -473,7 +472,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          return false;
       }
       uint64_t const untrusted_virtual_address = image->sections[i].VirtualAddress + image->image_base;
-      if (untrusted_virtual_address & (image->section_alignment - 1)) {
+      if (!IS_ALIGNED(untrusted_virtual_address, image->section_alignment)) {
          LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
              i, image->sections[i].Name, untrusted_virtual_address, image->section_alignment);
       }
@@ -513,9 +512,9 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
 
    uint32_t untrusted_signature_size = 0;
    uint32_t untrusted_signature_offset = 0;
-   if (image->directory_entries >= 5) {
-      untrusted_signature_offset = image->directory[4].VirtualAddress;
-      untrusted_signature_size = image->directory[4].Size;
+   if (image->directory_entries > EFI_IMAGE_DIRECTORY_ENTRY_SECURITY) {
+      untrusted_signature_offset = image->directory[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY].VirtualAddress;
+      untrusted_signature_size = image->directory[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY].Size;
    }
    if (untrusted_signature_offset == 0) {
       if (untrusted_signature_size != 0) {
@@ -576,7 +575,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
             LOG("Signature too small (got %" PRIu32 ", minimum 8", sig->dwLength);
             return false;
          }
-         if (sig->dwLength & 7) {
+         if (!IS_ALIGNED(sig->dwLength, 8)) {
             LOG("Signature length 0x%" PRIx32 " is not 8-byte aligned", sig->dwLength);
             return false;
          }
