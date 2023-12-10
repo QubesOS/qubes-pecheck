@@ -325,7 +325,7 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
 
    /* sanitize SizeOfHeaders start */
    if (untrusted_size_of_headers >= len) {
-      LOG("SizeOfHeaders extends past end of image (0x%" PRIx32 " > 0x%zu)",
+      LOG("SizeOfHeaders extends past end of image (0x%" PRIx32 " > 0x%" PRIx32 ")",
           untrusted_size_of_headers, len);
       return false;
    }
