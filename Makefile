@@ -1,5 +1,6 @@
 MAKEFLAGS := -rR
 SOURCES := winpe.c main.c
+MANDATORY_CFLAGS := -fno-strict-aliasing
 winpe: $(SOURCES) Makefile
 ifneq "$(CC)" "gcc"
 	clang -fsanitize=undefined -fsanitize-minimal-runtime -D_FORTIFY_SOURCE=2 -g3 \
@@ -8,12 +9,12 @@ ifneq "$(CC)" "gcc"
 	-Wno-declaration-after-statement -Wno-unsafe-buffer-usage \
 	-Wno-language-extension-token \
 	-Wformat=2 -MD -MP -MF winpe.dep \
-	-D_GNU_SOURCE=1 -- $(SOURCES)
+	-D_GNU_SOURCE=1 $(MANDATORY_CFLAGS) -- $(SOURCES)
 else
 	gcc -D_FORTIFY_SOURCE=2 -fcf-protection=full -mstack-protector-guard=tls \
 	-fstack-check=specific -Wformat=2 \
 	-Wl,-z,relro,-z,now -fPIC -owinpe -O2 -Wall -Wextra -Werror -MD -MP -MF winpe.dep \
-	$(SOURCES)
+	$(SOURCES) $(MANDATORY_CFLAGS)
 endif
 clean:
 	rm -f winpe winpe.o
