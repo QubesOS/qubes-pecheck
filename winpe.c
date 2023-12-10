@@ -12,30 +12,31 @@
 #include <unistd.h>
 
 #include "winpe.h"
-static_assert(sizeof(IMAGE_SECTION_HEADER) == 8 + 4 * 6 + 2 * 2 + 4,
-              "IMAGE_SECTION_HEADER has padding?");
+#include "WinCertificate.h"
+static_assert(sizeof(EFI_IMAGE_SECTION_HEADER) == 8 + 4 * 6 + 2 * 2 + 4,
+              "EFI_IMAGE_SECTION_HEADER has padding?");
 
 
-#define OPTIONAL_HEADER_OFFSET32 (offsetof(IMAGE_NT_HEADERS32, OptionalHeader))
-#define OPTIONAL_HEADER_OFFSET64 (offsetof(IMAGE_NT_HEADERS64, OptionalHeader))
+#define OPTIONAL_HEADER_OFFSET32 (offsetof(EFI_IMAGE_NT_HEADERS32, OptionalHeader))
+#define OPTIONAL_HEADER_OFFSET64 (offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader))
 
-static_assert(OPTIONAL_HEADER_OFFSET32 == sizeof(uint32_t) + sizeof(IMAGE_FILE_HEADER), "unexpected padding");
-static_assert(OPTIONAL_HEADER_OFFSET64 == sizeof(uint32_t) + sizeof(IMAGE_FILE_HEADER), "IMAGE_NT_HEADERS32 and IMAGE_NT_HEADERS64 must not have padding");
-static_assert(alignof(IMAGE_FILE_HEADER) == 4,
-              "wrong defintion of IMAGE_FILE_HEADER");
-static_assert(alignof(IMAGE_NT_HEADERS32) == 4,
+static_assert(OPTIONAL_HEADER_OFFSET32 == sizeof(uint32_t) + sizeof(EFI_IMAGE_FILE_HEADER), "unexpected padding");
+static_assert(OPTIONAL_HEADER_OFFSET64 == sizeof(uint32_t) + sizeof(EFI_IMAGE_FILE_HEADER), "IMAGE_NT_HEADERS32 and IMAGE_NT_HEADERS64 must not have padding");
+static_assert(alignof(EFI_IMAGE_FILE_HEADER) == 4,
+              "wrong defintion of EFI_IMAGE_FILE_HEADER");
+static_assert(alignof(EFI_IMAGE_NT_HEADERS32) == 4,
               "wrong defintion of IMAGE_NT_HEADERS32");
-static_assert(alignof(IMAGE_NT_HEADERS64) == 8,
+static_assert(alignof(EFI_IMAGE_NT_HEADERS64) == 8,
               "wrong defintion of IMAGE_NT_HEADERS64");
-static_assert(offsetof(IMAGE_NT_HEADERS32, FileHeader) == 4,
+static_assert(offsetof(EFI_IMAGE_NT_HEADERS32, FileHeader) == 4,
               "wrong definition of IMAGE_NT_HEADERS32");
-static_assert(offsetof(IMAGE_NT_HEADERS64, FileHeader) == 4,
+static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, FileHeader) == 4,
               "wrong definition of IMAGE_NT_HEADERS64");
 static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header");
 
 #define MIN_FILE_ALIGNMENT (UINT32_C(32))
-#define MIN_OPTIONAL_HEADER_SIZE (offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory))
-#define MAX_OPTIONAL_HEADER_SIZE (sizeof(IMAGE_OPTIONAL_HEADER64))
+#define MIN_OPTIONAL_HEADER_SIZE (offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory))
+#define MAX_OPTIONAL_HEADER_SIZE (sizeof(EFI_IMAGE_OPTIONAL_HEADER64))
 
 /**
  * Extract the NT header, skipping over any DOS header.
@@ -53,20 +54,17 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
 #define NT_HEADER_OFFSET_LOC UINT32_C(60)
 #define DOS_HEADER_SIZE (NT_HEADER_OFFSET_LOC + sizeof(uint32_t))
-   union PeHeader const* retval;
-   static_assert(DOS_HEADER_SIZE < sizeof(*retval),
+   union PeHeader const* pe_header;
+   static_assert(DOS_HEADER_SIZE < sizeof(*pe_header),
                  "NT header shorter than DOS header?");
-   static_assert(DOS_HEADER_SIZE + sizeof(IMAGE_NT_HEADERS64) <= 512,
-                 "headers too long");
 
-   if (len < sizeof(*retval)) {
-      LOG("Too short (min length %zu, got %zu)", sizeof(*retval), len);
+   if (len < sizeof(*pe_header)) {
+      LOG("Too short (min length %zu, got %zu)", sizeof(*pe_header), len);
       return NULL;
    }
 
    if (ptr[0] == 'M' && ptr[1] == 'Z') {
       uint32_t nt_header_offset;
-      static_assert(sizeof nt_header_offset == 4, "compiler bug");
       /* Skip past DOS header */
       memcpy(&nt_header_offset, ptr + NT_HEADER_OFFSET_LOC, sizeof(uint32_t));
 
@@ -76,7 +74,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
-      if (nt_header_offset > len - sizeof(*retval)) {
+      if (nt_header_offset > len - sizeof(*pe_header)) {
          LOG("NT header does not leave room for section (offset %" PRIi32 ", file size %zu)",
              nt_header_offset, len);
          return NULL;
@@ -88,21 +86,16 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
       }
 
       LOG("Skipping DOS header of %" PRIu32 " bytes", nt_header_offset);
-      retval = (const union PeHeader *)(ptr + nt_header_offset);
+      pe_header = (const union PeHeader *)(ptr + nt_header_offset);
    } else {
-      retval = (const union PeHeader *)ptr;
+      pe_header = (const union PeHeader *)ptr;
    }
 
-   if (memcmp(retval, "PE\0", 4) != 0) {
-      LOG("Bad magic for NT header");
-      return NULL;
-   }
-
-   return retval;
+   return pe_header;
 }
 
 static bool
-validate_section_name(const IMAGE_SECTION_HEADER *section)
+validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
 {
    /* Validate section name */
    const uint8_t *name = section->Name;
@@ -134,7 +127,7 @@ validate_section_name(const IMAGE_SECTION_HEADER *section)
    return true;
 }
 
-static bool parse_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
+static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header,
                               uint32_t nt_len,
                               uint32_t *nt_header_size,
                               uint32_t *number_of_sections,
@@ -199,7 +192,7 @@ static bool parse_file_header(const IMAGE_FILE_HEADER *untrusted_file_header,
     * Therefore, the maximum is 40 * 96 + 112 + 16 * 8 = 4080 bytes.
     */
    uint32_t const untrusted_nt_headers_size =
-      (NumberOfSections * (uint32_t)sizeof(IMAGE_SECTION_HEADER)) +
+      (NumberOfSections * (uint32_t)sizeof(EFI_IMAGE_SECTION_HEADER)) +
       ((uint32_t)OPTIONAL_HEADER_OFFSET32 + SizeOfOptionalHeader);
    /* sanitize NT headers size start */
    if (nt_len <= untrusted_nt_headers_size) {
@@ -279,9 +272,9 @@ static bool parse_optional_header(union PeHeader const *const untrusted_pe_heade
    switch (untrusted_pe_header->shared.Magic) {
    case 0x10b:
       LOG("This is a PE32 file: magic 0x10b");
-      static_assert(offsetof(IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
-      static_assert(offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96, "wrong size");
-      min_size_of_optional_header = offsetof(IMAGE_OPTIONAL_HEADER32, DataDirectory);
+      static_assert(offsetof(EFI_IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
+      static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96, "wrong size");
+      min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory);
       untrusted_image_base = untrusted_pe_header->pe32.OptionalHeader.ImageBase;
       untrusted_file_alignment = untrusted_pe_header->pe32.OptionalHeader.FileAlignment;
       untrusted_section_alignment = untrusted_pe_header->pe32.OptionalHeader.SectionAlignment;
@@ -292,9 +285,9 @@ static bool parse_optional_header(union PeHeader const *const untrusted_pe_heade
       break;
    case 0x20b:
       LOG("This is a PE32+ file: magic 0x20b");
-      static_assert(offsetof(IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
-      static_assert(offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112, "wrong size");
-      min_size_of_optional_header = offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory);
+      static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
+      static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112, "wrong size");
+      min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory);
       untrusted_image_base = untrusted_pe_header->pe32p.OptionalHeader.ImageBase;
       untrusted_file_alignment = untrusted_pe_header->pe32p.OptionalHeader.FileAlignment;
       untrusted_section_alignment = untrusted_pe_header->pe32p.OptionalHeader.SectionAlignment;
@@ -314,7 +307,7 @@ static bool parse_optional_header(union PeHeader const *const untrusted_pe_heade
    }
 
    /* sanitize directory entry number start */
-   if (untrusted_number_of_directory_entries > IMAGE_NUMBEROF_DIRECTORY_ENTRIES) {
+   if (untrusted_number_of_directory_entries > 16) {
       LOG("Too many NumberOfRvaAndSizes (got %" PRIu32 ", limit 16",
           untrusted_number_of_directory_entries);
       return false;
@@ -350,7 +343,7 @@ static bool parse_optional_header(union PeHeader const *const untrusted_pe_heade
    /* sanitize SizeOfHeaders end */
 
    uint32_t const expected_optional_header_size =
-      image->directory_entries * sizeof(IMAGE_DATA_DIRECTORY) +
+      image->directory_entries * sizeof(EFI_IMAGE_DATA_DIRECTORY) +
       min_size_of_optional_header;
    if (optional_header_size != expected_optional_header_size) {
       LOG("Wrong optional header size: got %" PRIu32 " but computed %" PRIu32,
@@ -378,8 +371,14 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
    if (untrusted_pe_header == NULL) {
       return false;
    }
-
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
+   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET32;
+
+   if (memcmp(untrusted_pe_header, "PE\0", 4) != 0) {
+      LOG("Bad magic for NT header at offset 0x%" PRIx32, nt_header_offset);
+      return false;
+   }
+
    uint32_t nt_header_size, optional_header_size;
    if (!parse_file_header(&untrusted_pe_header->shared.FileHeader,
                           (uint32_t)len - nt_header_offset,
@@ -388,8 +387,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                           &optional_header_size)) {
       return false;
    }
-   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET32;
-   image->sections = (const IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
+   image->sections = (const EFI_IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
 
    /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
    uint32_t const nt_header_end = nt_header_size + nt_header_offset;
@@ -420,8 +418,8 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          return false;
       }
 
-      if (image->sections[i].PointerToLineNumbers != 0 ||
-          image->sections[i].NumberOfLineNumbers != 0) {
+      if (image->sections[i].PointerToLinenumbers != 0 ||
+          image->sections[i].NumberOfLinenumbers != 0) {
          LOG("Section %" PRIu32 " contains COFF line numbers", i);
          return false;
       }
@@ -454,10 +452,10 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                 last_section_start);
             return false;
          }
-         if (image->sections[i].SizeOfRawData < image->sections[i].VirtualSize) {
+         if (image->sections[i].SizeOfRawData < image->sections[i].Misc.VirtualSize) {
             LOG("Section %" PRIu32 " has size 0x%" PRIx32 " in the file, but "
                 "0x%" PRIx32 " in memory", i, image->sections[i].SizeOfRawData,
-                image->sections[i].VirtualSize);
+                image->sections[i].Misc.VirtualSize);
             return false;
          }
          last_section_start += image->sections[i].SizeOfRawData;
@@ -479,9 +477,9 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
              i, image->sections[i].Name, untrusted_virtual_address, image->section_alignment);
       }
-      if (max_address - untrusted_virtual_address < image->sections[i].VirtualSize) {
+      if (max_address - untrusted_virtual_address < image->sections[i].Misc.VirtualSize) {
          LOG("Virtual address overflow: 0x%" PRIx64 " + 0x%" PRIx32 " > 0x%" PRIx64,
-             untrusted_virtual_address, image->sections[i].VirtualSize, max_address);
+             untrusted_virtual_address, image->sections[i].Misc.VirtualSize, max_address);
          return false;
       }
       LOG("Section %" PRIu32 "(name %.8s) has flags 0x%" PRIx32, i, new_section_name, image->sections[i].Characteristics);
@@ -507,7 +505,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
             return false;
          }
          last_virtual_address = untrusted_virtual_address;
-         last_virtual_address_end = last_virtual_address + image->sections[i].VirtualSize;
+         last_virtual_address_end = last_virtual_address + image->sections[i].Misc.VirtualSize;
          section_name = new_section_name;
       }
 
@@ -517,7 +515,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
    uint32_t untrusted_signature_offset = 0;
    if (image->directory_entries >= 5) {
       untrusted_signature_offset = image->directory[4].VirtualAddress;
-      untrusted_signature_size = image->directory[4].size;
+      untrusted_signature_size = image->directory[4].Size;
    }
    if (untrusted_signature_offset == 0) {
       if (untrusted_signature_size != 0) {
@@ -556,36 +554,36 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
        * be maintained because sig->length must be a multiple of 8.
        */
       do {
-         if (signature_size < sizeof(struct WIN_CERTIFICATE)) {
+         if (signature_size < sizeof(WIN_CERTIFICATE)) {
             LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_size);
             return false;
          }
-         const struct WIN_CERTIFICATE *sig = (const struct WIN_CERTIFICATE *)(ptr + signature_offset);
-         if (sig->revision != 0x0200) {
-            LOG("Wrong signature version 0x%" PRIx16, sig->revision);
+         const WIN_CERTIFICATE *sig = (const WIN_CERTIFICATE *)(ptr + signature_offset);
+         if (sig->wRevision != 0x0200) {
+            LOG("Wrong signature version 0x%" PRIx16, sig->wRevision);
             return false;
          }
-         if (sig->certificate_type != 0x0002) {
-            LOG("Wrong signature type 0x%" PRIx16, sig->revision);
+         if (sig->wCertificateType != 0x0002) {
+            LOG("Wrong signature type 0x%" PRIx16, sig->wCertificateType);
             return false;
          }
-         if (sig->length > signature_size) {
+         if (sig->dwLength > signature_size) {
             LOG("Signature too long: signature is 0x%" PRIx32 " bytes but directory entry has 0x%" PRIx32 " bytes",
-                sig->length, signature_size);
+                sig->dwLength, signature_size);
             return false;
          }
-         if (sig->length < sizeof(struct WIN_CERTIFICATE)) {
-            LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_size);
+         if (sig->dwLength < sizeof(WIN_CERTIFICATE)) {
+            LOG("Signature too small (got %" PRIu32 ", minimum 8", sig->dwLength);
             return false;
          }
-         if (sig->length & 7) {
-            LOG("Signature length 0x%" PRIx32 " is not 8-byte aligned", sig->length);
+         if (sig->dwLength & 7) {
+            LOG("Signature length 0x%" PRIx32 " is not 8-byte aligned", sig->dwLength);
             return false;
          }
          LOG("Signature at offset 0x%" PRIx32 " with length 0x%" PRIx32,
-             signature_offset, sig->length);
-         signature_offset += sig->length;
-         signature_size -= sig->length;
+             signature_offset, sig->dwLength);
+         signature_offset += sig->dwLength;
+         signature_size -= sig->dwLength;
       } while (signature_size > 0);
    }
    return true;
