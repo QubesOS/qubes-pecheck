@@ -20,22 +20,6 @@ typedef char16_t CHAR16;
 #include "Base.h"
 #include "PeImage.h"
 
-struct SharedNtHeader {
-   uint32_t          Signature;
-   EFI_IMAGE_FILE_HEADER FileHeader;
-   uint16_t          Magic;
-   uint8_t           MajorLinkerVersion;
-   uint8_t           MinorLinkerVersion;
-   uint32_t          SizeOfCode;
-} __attribute__((__may_alias__));
-static_assert(sizeof(struct SharedNtHeader) == 32, "bad size of struct SharedNtHeader");
-
-union PeHeader {
-   struct SharedNtHeader shared;
-   EFI_IMAGE_NT_HEADERS32    pe32;
-   EFI_IMAGE_NT_HEADERS64    pe32p;
-} __attribute__((__may_alias__));
-
 struct ParsedImage {
    uint64_t image_base;
    uint32_t file_alignment;

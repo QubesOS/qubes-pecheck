@@ -49,12 +49,12 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
  *
  * \return The pointer on success, or NULL on failure.
  */
-static const union PeHeader*
+static const EFI_IMAGE_OPTIONAL_HEADER_UNION*
 extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
 #define NT_HEADER_OFFSET_LOC UINT32_C(60)
 #define DOS_HEADER_SIZE (NT_HEADER_OFFSET_LOC + sizeof(uint32_t))
-   union PeHeader const* pe_header;
+   EFI_IMAGE_OPTIONAL_HEADER_UNION const* pe_header;
    static_assert(DOS_HEADER_SIZE < sizeof(*pe_header),
                  "NT header shorter than DOS header?");
 
@@ -86,9 +86,9 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
       }
 
       LOG("Skipping DOS header of %" PRIu32 " bytes", nt_header_offset);
-      pe_header = (const union PeHeader *)(ptr + nt_header_offset);
+      pe_header = (const EFI_IMAGE_OPTIONAL_HEADER_UNION *)(ptr + nt_header_offset);
    } else {
-      pe_header = (const union PeHeader *)ptr;
+      pe_header = (const EFI_IMAGE_OPTIONAL_HEADER_UNION *)ptr;
    }
 
    return pe_header;
@@ -256,7 +256,7 @@ validate_image_base_and_alignment(uint64_t const image_base,
    return true;
 }
 
-static bool parse_optional_header(union PeHeader const *const untrusted_pe_header,
+static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header,
                                   struct ParsedImage *const image,
                                   uint32_t len,
                                   uint32_t nt_header_end,
@@ -269,40 +269,40 @@ static bool parse_optional_header(union PeHeader const *const untrusted_pe_heade
    uint32_t untrusted_number_of_directory_entries;
    uint32_t min_size_of_optional_header;
 
-   switch (untrusted_pe_header->shared.Magic) {
-   case 0x10b:
+   switch (untrusted_pe_header->Pe32.OptionalHeader.Magic) {
+   case EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC:
       LOG("This is a PE32 file: magic 0x10b");
       static_assert(offsetof(EFI_IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
       static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96, "wrong size");
       min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory);
-      untrusted_image_base = untrusted_pe_header->pe32.OptionalHeader.ImageBase;
-      untrusted_file_alignment = untrusted_pe_header->pe32.OptionalHeader.FileAlignment;
-      untrusted_section_alignment = untrusted_pe_header->pe32.OptionalHeader.SectionAlignment;
-      untrusted_size_of_headers = untrusted_pe_header->pe32.OptionalHeader.SizeOfHeaders;
-      untrusted_number_of_directory_entries = untrusted_pe_header->pe32.OptionalHeader.NumberOfRvaAndSizes;
-      image->directory = untrusted_pe_header->pe32.OptionalHeader.DataDirectory;
+      untrusted_image_base = untrusted_pe_header->Pe32.OptionalHeader.ImageBase;
+      untrusted_file_alignment = untrusted_pe_header->Pe32.OptionalHeader.FileAlignment;
+      untrusted_section_alignment = untrusted_pe_header->Pe32.OptionalHeader.SectionAlignment;
+      untrusted_size_of_headers = untrusted_pe_header->Pe32.OptionalHeader.SizeOfHeaders;
+      untrusted_number_of_directory_entries = untrusted_pe_header->Pe32.OptionalHeader.NumberOfRvaAndSizes;
+      image->directory = untrusted_pe_header->Pe32.OptionalHeader.DataDirectory;
       *max_address = UINT32_MAX;
       break;
-   case 0x20b:
+   case EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC:
       LOG("This is a PE32+ file: magic 0x20b");
       static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
       static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112, "wrong size");
       min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory);
-      untrusted_image_base = untrusted_pe_header->pe32p.OptionalHeader.ImageBase;
-      untrusted_file_alignment = untrusted_pe_header->pe32p.OptionalHeader.FileAlignment;
-      untrusted_section_alignment = untrusted_pe_header->pe32p.OptionalHeader.SectionAlignment;
-      untrusted_size_of_headers = untrusted_pe_header->pe32p.OptionalHeader.SizeOfHeaders;
-      untrusted_number_of_directory_entries = untrusted_pe_header->pe32p.OptionalHeader.NumberOfRvaAndSizes;
-      image->directory = untrusted_pe_header->pe32p.OptionalHeader.DataDirectory;
+      untrusted_image_base = untrusted_pe_header->Pe32Plus.OptionalHeader.ImageBase;
+      untrusted_file_alignment = untrusted_pe_header->Pe32Plus.OptionalHeader.FileAlignment;
+      untrusted_section_alignment = untrusted_pe_header->Pe32Plus.OptionalHeader.SectionAlignment;
+      untrusted_size_of_headers = untrusted_pe_header->Pe32Plus.OptionalHeader.SizeOfHeaders;
+      untrusted_number_of_directory_entries = untrusted_pe_header->Pe32Plus.OptionalHeader.NumberOfRvaAndSizes;
+      image->directory = untrusted_pe_header->Pe32Plus.OptionalHeader.DataDirectory;
       *max_address = UINT64_MAX;
       break;
    case 0xb20:
    case 0xb10:
       LOG("Optional header indicates endian-swapped file (not implemented) %" PRIu16,
-          untrusted_pe_header->shared.Magic);
+          untrusted_pe_header->Pe32.OptionalHeader.Magic);
       return false;
    default:
-      LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->shared.Magic);
+      LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->Pe32.OptionalHeader.Magic);
       return false;
    }
 
@@ -367,7 +367,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       return NULL;
    }
 
-   union PeHeader const *const untrusted_pe_header = extract_pe_header(ptr, len);
+   EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header = extract_pe_header(ptr, len);
    if (untrusted_pe_header == NULL) {
       return false;
    }
@@ -380,7 +380,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
    }
 
    uint32_t nt_header_size, optional_header_size;
-   if (!parse_file_header(&untrusted_pe_header->shared.FileHeader,
+   if (!parse_file_header(&untrusted_pe_header->Pe32.FileHeader,
                           (uint32_t)len - nt_header_offset,
                           &nt_header_size,
                           &image->n_sections,
