@@ -75,7 +75,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
       }
 
       if (nt_header_offset > len - sizeof(*pe_header)) {
-         LOG("NT header does not leave room for section (offset %" PRIi32 ", file size %zu)",
+         LOG("DOS header does not leave room for NT header (offset %" PRIi32 ", file size %zu)",
              nt_header_offset, len);
          return NULL;
       }
