@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "winpe.h"
+#include "winpe-private.h"
 #include "WinCertificate.h"
 static_assert(sizeof(EFI_IMAGE_SECTION_HEADER) == 8 + 4 * 6 + 2 * 2 + 4,
               "EFI_IMAGE_SECTION_HEADER has padding?");
@@ -49,7 +50,7 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
  *
  * \return The pointer on success, or NULL on failure.
  */
-static const EFI_IMAGE_OPTIONAL_HEADER_UNION*
+const EFI_IMAGE_OPTIONAL_HEADER_UNION*
 extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
 #define NT_HEADER_OFFSET_LOC UINT32_C(60)
@@ -60,6 +61,16 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
 
    if (len < sizeof(*pe_header)) {
       LOG("Too short (min length %zu, got %zu)", sizeof(*pe_header), len);
+      return NULL;
+   }
+
+   if (len > 0x7FFFFFFFUL) {
+      LOG("Too long (max length 0x7FFFFFFF, got 0x%zx)", len);
+      return NULL;
+   }
+
+   if (!ADDRESS_IS_ALIGNED((const void *)ptr, 8)) {
+      LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
       return NULL;
    }
 
@@ -80,13 +91,21 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
-      if (!IS_ALIGNED(nt_header_offset, 8)) {
+      if (!IS_ALIGNED(nt_header_offset, alignof(*pe_header))) {
          LOG("NT header not 8-byte aligned (offset %" PRIi32 ")", nt_header_offset);
          return NULL;
       }
 
-      LOG("Skipping DOS header of %" PRIu32 " bytes", nt_header_offset);
+      if (0)
+         LOG("Skipping DOS header of %" PRIu32 " bytes", nt_header_offset);
+      if (memcmp(ptr + nt_header_offset, "PE\0", 4) != 0) {
+         LOG("Bad magic for NT header at offset 0x%" PRIx32, nt_header_offset);
+         return false;
+      }
       pe_header = (const EFI_IMAGE_OPTIONAL_HEADER_UNION *)(ptr + nt_header_offset);
+   } else if (memcmp(ptr, "PE\0", 4) != 0) {
+      LOG("Image has neither DOS nor NT magic at start");
+      pe_header = NULL;
    } else {
       pe_header = (const EFI_IMAGE_OPTIONAL_HEADER_UNION *)ptr;
    }
@@ -361,22 +380,12 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       return NULL;
    }
 
-   if (!ADDRESS_IS_ALIGNED((const void *)ptr, 8)) {
-      LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
-      return NULL;
-   }
-
    EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header = extract_pe_header(ptr, len);
    if (untrusted_pe_header == NULL) {
       return false;
    }
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
    const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET32;
-
-   if (memcmp(untrusted_pe_header, "PE\0", 4) != 0) {
-      LOG("Bad magic for NT header at offset 0x%" PRIx32, nt_header_offset);
-      return false;
-   }
 
    uint32_t nt_header_size, optional_header_size;
    if (!parse_file_header(&untrusted_pe_header->Pe32.FileHeader,
