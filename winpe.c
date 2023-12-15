@@ -91,7 +91,7 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
-      if (!IS_ALIGNED(nt_header_offset, alignof(*pe_header))) {
+      if (!IS_ALIGNED(nt_header_offset, alignof(EFI_IMAGE_OPTIONAL_HEADER_UNION))) {
          LOG("NT header not 8-byte aligned (offset %" PRIi32 ")", nt_header_offset);
          return NULL;
       }
