@@ -38,13 +38,16 @@ static void test_dos_header(void) {
          assert((void *)extract_pe_header(header, sizeof header) == NULL);
       }
    }
-}
-
-static void test_file_header(void) {
+   // Check for integer overflow problems
+   for (nt_offset = UINT32_MAX - sizeof header;; nt_offset += 1) {
+      memcpy(header + 60, &nt_offset, 4);
+      assert((void *)extract_pe_header(header, sizeof header) == NULL);
+      if (nt_offset == UINT32_MAX)
+         break;
+   }
 }
 
 int main(void)
 {
    test_dos_header();
-   test_file_header();
 }
