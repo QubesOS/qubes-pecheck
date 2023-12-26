@@ -169,11 +169,7 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
           untrusted_file_header->PointerToSymbolTable,
           untrusted_file_header->NumberOfSymbols);
    }
-   /*
-    * FIXME: sanitize symbol table.  Note that if the file is signed,
-    * these pointers must be offset by the contents of the certificate
-    * table, as signing the file will change them.
-    */
+   /* FIXME: sanitize symbol table. */
 
    /* sanitize SizeOfOptionalHeader start */
    uint32_t const SizeOfOptionalHeader = untrusted_file_header->SizeOfOptionalHeader;
@@ -615,36 +611,55 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       LOG("File is not signed");
    } else {
       /* sanitize signature offset and size start */
-      if (untrusted_signature_offset != last_section_start) {
-         LOG("Signature does not start immediately after last section (%" PRIu32 " != %" PRIu32 ")",
+      if (untrusted_signature_offset < last_section_start) {
+         LOG("Signature overlaps sections (0x%" PRIx32 " < 0x%" PRIx32 ")",
                untrusted_signature_offset, last_section_start);
          return false;
       }
 
-      if (untrusted_signature_size > len - last_section_start) {
-         LOG("Signature too large (got 0x%" PRIx32 "but only 0x%zu bytes left in file)",
-               untrusted_signature_size, len - last_section_start);
+      if (untrusted_signature_offset % 8) {
+         LOG("Signature misaligned (0x%" PRIx32 " not multiple of 8)",
+             untrusted_signature_offset);
          return false;
       }
 
-      if ((untrusted_signature_size & 7) != 0) {
-         LOG("Signature size not a multiple of 8 (got 0x%" PRIx32 ")",
-             untrusted_signature_size);
+      if (untrusted_signature_offset > len) {
+         LOG("Signature starts after end of file (got 0x%" PRIx32 "but only 0x%zu bytes in file)",
+               untrusted_signature_size, len);
          return false;
       }
 
       uint32_t signature_offset = untrusted_signature_offset;
-      uint32_t signature_size = untrusted_signature_size;
+      uint32_t untrusted_signature_len = (uint32_t)len - signature_offset;
+
+      if ((untrusted_signature_len & 7) != 0) {
+         LOG("Signature size not a multiple of 8 (got 0x%" PRIx32 ")",
+             untrusted_signature_len);
+         return false;
+      }
+      uint32_t signature_len = untrusted_signature_len;
+
+      if (untrusted_signature_size > signature_len) {
+         LOG("Signature too large (got 0x%" PRIx32 "but only 0x%" PRIx32 " bytes left in file)",
+             untrusted_signature_size, signature_len);
+         return false;
+      }
+
+      if (untrusted_signature_size != signature_len) {
+         LOG("Trailing junk after signature: signature is 0x%" PRIx32 " bytes, but 0x%" PRIx32 " bytes left in file",
+             untrusted_signature_size, signature_len);
+         return false;
+      }
       /* sanitize signature offset and size end */
 
-      /* Alignment is guaranteed initially because signature_offset was checked to equal
-       * last_section_start, and last_section_start must be a multiple of file_alignment.
-       * file_alignment, in turn, must be at least 32 and a power of 2.  Alignment will
-       * be maintained because sig->length must be a multiple of 8.
+      /* Alignment is guaranteed initially because signature_offset was checked to be a
+       * multiple of 8.  Alignment will be maintained because sig->length is rounded up to
+       * the next multiple of 8.  This will not cause out-of-bounds memory access because
+       * signature_len is checked to be a multiple of 8.
        */
       do {
-         if (signature_size < sizeof(WIN_CERTIFICATE)) {
-            LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_size);
+         if (signature_len < sizeof(WIN_CERTIFICATE)) {
+            LOG("Signature too small (got %" PRIu32 ", minimum 8", signature_len);
             return false;
          }
          const WIN_CERTIFICATE *sig = (const WIN_CERTIFICATE *)(ptr + signature_offset);
@@ -656,24 +671,21 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
             LOG("Wrong signature type 0x%" PRIx16, sig->wCertificateType);
             return false;
          }
-         if (sig->dwLength > signature_size) {
+         if (sig->dwLength > signature_len) {
             LOG("Signature too long: signature is 0x%" PRIx32 " bytes but directory entry has 0x%" PRIx32 " bytes",
-                sig->dwLength, signature_size);
+                sig->dwLength, signature_len);
             return false;
          }
          if (sig->dwLength < sizeof(WIN_CERTIFICATE)) {
             LOG("Signature too small (got %" PRIu32 ", minimum 8", sig->dwLength);
             return false;
          }
-         if (!IS_ALIGNED(sig->dwLength, 8)) {
-            LOG("Signature length 0x%" PRIx32 " is not 8-byte aligned", sig->dwLength);
-            return false;
-         }
          LOG("Signature at offset 0x%" PRIx32 " with length 0x%" PRIx32,
              signature_offset, sig->dwLength);
-         signature_offset += sig->dwLength;
-         signature_size -= sig->dwLength;
-      } while (signature_size > 0);
+         uint32_t new_length = (sig->dwLength + UINT32_C(7)) & ~UINT32_C(7);
+         signature_offset += new_length;
+         signature_len -= new_length;
+      } while (signature_len > 0);
    }
    return true;
 }
