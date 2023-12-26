@@ -396,6 +396,46 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
    return validate_data_directories(image->directory, image->directory_entries);
 }
 
+/**
+ * Check if the given directory fits in the given section.
+ */
+static bool
+directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
+                     EFI_IMAGE_SECTION_HEADER const *const section_header,
+                     bool *found)
+{
+   // End of directory in address space.
+   // Overflow is not possible: checked by parse_optional_header.
+   uint32_t const directory_end = directory.VirtualAddress + directory.Size;
+
+   // End of section in address space.
+   // Overflow is not possible: checked by pe_parse.
+   uint32_t const section_end = section_header->Misc.VirtualSize + section_header->VirtualAddress;
+
+   if (section_header->VirtualAddress <= directory_end &&
+       directory.VirtualAddress <= section_end) {
+      if (section_header->PointerToRawData == 0) {
+         LOG("Data directory is located in an unmapped section");
+         return false;
+      }
+
+      if (directory.VirtualAddress < section_header->VirtualAddress) {
+         LOG("Directory starts before section");
+         return false;
+      }
+
+      if (section_end < directory_end) {
+         LOG("Section ends after directory");
+         return false;
+      }
+
+      if (found != NULL)
+         *found = true;
+   }
+
+   return true;
+}
+
 bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
 {
    if (len > 0x7FFFFFFFUL) {
@@ -436,8 +476,24 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          return false;
       }
    }
+
+   const EFI_IMAGE_DATA_DIRECTORY debug_directory =
+      image->directory_entries > EFI_IMAGE_DIRECTORY_ENTRY_DEBUG ?
+         image->directory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG] :
+         (EFI_IMAGE_DATA_DIRECTORY) { 0, 0 };
+
+   bool debug_directory_found = debug_directory.Size == 0;
+   if (debug_directory_found && debug_directory.VirtualAddress != 0) {
+      LOG("Debug directory has zero size but non-zero address");
+      return false;
+   }
+
    /* Overflow is impossible: max_address is always at least as large as image->image_base */
-   uint64_t const image_address_space = max_address - image->image_base;
+   uint64_t image_address_space = max_address - image->image_base;
+   if (image_address_space > UINT32_MAX)
+      image_address_space = UINT32_MAX;
+   image_address_space &= ~(uint64_t)(image->section_alignment - 1);
+   max_address = image->image_base + image_address_space;
    uint32_t last_section_start = image->size_of_headers;
    uint64_t last_virtual_address = 0;
    uint64_t last_virtual_address_end = 0;
@@ -538,8 +594,15 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          last_virtual_address = untrusted_virtual_address;
          last_virtual_address_end = last_virtual_address + image->sections[i].Misc.VirtualSize;
          section_name = new_section_name;
-      }
 
+         if (!directory_in_section(debug_directory, image->sections + i, &debug_directory_found))
+             return false;
+      }
+   }
+
+   if (!debug_directory_found) {
+       LOG("Debug directory present, but not in any section");
+       return false;
    }
 
    uint32_t untrusted_signature_size = 0;
