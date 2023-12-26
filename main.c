@@ -15,8 +15,10 @@ int main(int argc, char **argv)
       return EXIT_FAILURE;
    }
    for (int i = 1; i < argc; ++i) {
-      int p = open(argv[i], O_RDONLY | O_CLOEXEC | O_NOCTTY);
       struct stat buf;
+      int p = open(argv[i], O_RDONLY | O_CLOEXEC | O_NOCTTY);
+      if (p < 0)
+         err(EXIT_FAILURE, "open(%s)", argv[i]);
       if (fstat(p, &buf))
          err(EXIT_FAILURE, "fstat(%s)", argv[i]);
       if (buf.st_size > 0x7FFFFFFFL || buf.st_size < 0)
