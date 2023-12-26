@@ -275,6 +275,29 @@ validate_image_base_and_alignment(uint64_t const image_base,
    return true;
 }
 
+static bool
+validate_data_directories(const EFI_IMAGE_DATA_DIRECTORY *const directory,
+                          uint32_t const directory_entries)
+{
+   for (uint32_t i = 0; i < directory_entries; ++i) {
+      uint32_t const virtual_address = directory[i].VirtualAddress;
+      uint32_t const size =  directory[i].Size;
+      if (UINT32_MAX - virtual_address < size) {
+         LOG("Data directory %" PRIu32 " is invalid: 0x%" PRIx32 " + 0x%" PRIx32 " > UINT32_MAX",
+             i, virtual_address, size);
+         return false;
+      }
+
+      if (virtual_address == 0 && size != 0) {
+         LOG("Data directory %" PRIu32 " is invalid: virtual address is 0 but size is 0x%" PRIx32,
+             i, size);
+         return false;
+      }
+   }
+
+   return true;
+}
+
 static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header,
                                   struct ParsedImage *const image,
                                   uint32_t len,
@@ -370,7 +393,7 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
       return false;
    }
 
-   return true;
+   return validate_data_directories(image->directory, image->directory_entries);
 }
 
 bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
@@ -526,12 +549,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       untrusted_signature_size = image->directory[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY].Size;
    }
    if (untrusted_signature_offset == 0) {
-      if (untrusted_signature_size != 0) {
-         LOG("Signature offset zero but size nonzero");
-         return false;
-      } else {
-         LOG("File is not signed");
-      }
+      LOG("File is not signed");
    } else {
       /* sanitize signature offset and size start */
       if (untrusted_signature_offset != last_section_start) {
