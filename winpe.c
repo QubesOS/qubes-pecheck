@@ -118,28 +118,54 @@ validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
 {
    /* Validate section name */
    const uint8_t *name = section->Name;
-   if (name[0] != '.')
-      LOG("Section name does not start with a \".\" - is it overlong?");
-   for (uint8_t j = 0; j < sizeof(section->Name); ++j) {
-      if (name[j] == '\0') {
-         if (j < 1) {
-            LOG("Empty section name not allowed");
+   uint32_t j;
+   switch (name[0]) {
+   case '\0':
+      LOG("Empty section name not allowed");
+      return false;
+   case '.':
+      for (j = 1; j < sizeof(section->Name); ++j) {
+         if (name[j] == '\0')
+            break;
+         if (name[j] == '$') {
+            LOG("$ not allowed in image section names");
             return false;
          }
-         for (uint8_t k = j + 1; k < sizeof(section->Name); ++k) {
-            if (name[k] != '\0') {
-               LOG("Section name has non-NUL byte after NUL byte");
-               return false;
-            }
+         if (name[j] <= ' ' || name[j] > '~') {
+            LOG("Invalid byte %" PRIu8 " in section name", name[j]);
+            return false;
          }
-         return true;
       }
-      if (name[j] == '$') {
-         LOG("$ not allowed in image section names");
+      break;
+   case '/':
+      if (name[1] == '0' && name[2] == '\0') {
+         j = 2;
+         break;
+      }
+      if (name[1] < '1' || name[1] > '9') {
+         LOG("Invalid first byte in long section name number");
          return false;
       }
-      if (name[j] <= ' ' || name[j] > '~') {
-         LOG("Invalid byte %" PRIu8 " in section name", name[j]);
+      if (name[sizeof(section->Name) - 1] != '\0') {
+         LOG("String table index not NUL terminated");
+         return false;
+      }
+      for (j = 2; j < sizeof(section->Name) - 1; ++j) {
+         if (name[j] == '\0')
+            break;
+         if (name[j] < '0' || name[j] > '9') {
+            LOG("Invalid byte in long section name");
+            return false;
+         }
+      }
+      break;
+   default:
+      LOG("Invalid start of section name");
+      return false;
+   }
+   for (uint8_t k = j; k < sizeof(section->Name); ++k) {
+      if (name[k] != '\0') {
+         LOG("Section name has non-NUL byte after NUL byte");
          return false;
       }
    }
