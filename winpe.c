@@ -459,11 +459,6 @@ directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
 
 bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
 {
-   if (len > 0x7FFFFFFFUL) {
-      LOG("Too long (max length 0x7FFFFFFF, got 0x%zx)", len);
-      return NULL;
-   }
-
    EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header = extract_pe_header(ptr, len);
    if (untrusted_pe_header == NULL) {
       return false;
