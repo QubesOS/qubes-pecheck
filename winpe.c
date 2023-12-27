@@ -419,7 +419,7 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
 static bool
 directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
                      EFI_IMAGE_SECTION_HEADER const *const section_header,
-                     bool *found)
+                     bool *found, uint32_t directory_index, uint32_t section_index)
 {
    // End of directory in address space.
    // Overflow is not possible: checked by parse_optional_header.
@@ -442,7 +442,11 @@ directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
       }
 
       if (section_end < directory_end) {
-         LOG("Section ends after directory");
+         LOG("Directory %" PRIu32 " extends past section %" PRIu32
+             ": directory is [0x%" PRIx32 ", 0x%" PRIx32 ") but section is [0x%" PRIx32 ", 0x%" PRIx32 ")",
+             directory_index, section_index,
+             directory.VirtualAddress, directory_end,
+             section_header->VirtualAddress, section_end);
          return false;
       }
 
@@ -494,17 +498,6 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       }
    }
 
-   const EFI_IMAGE_DATA_DIRECTORY debug_directory =
-      image->directory_entries > EFI_IMAGE_DIRECTORY_ENTRY_DEBUG ?
-         image->directory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG] :
-         (EFI_IMAGE_DATA_DIRECTORY) { 0, 0 };
-
-   bool debug_directory_found = debug_directory.Size == 0;
-   if (debug_directory_found && debug_directory.VirtualAddress != 0) {
-      LOG("Debug directory has zero size but non-zero address");
-      return false;
-   }
-
    /* Overflow is impossible: max_address is always at least as large as image->image_base */
    uint64_t image_address_space = max_address - image->image_base;
    if (image_address_space > UINT32_MAX)
@@ -515,6 +508,12 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
    uint64_t last_virtual_address = 0;
    uint64_t last_virtual_address_end = 0;
    const uint8_t *section_name = NULL, *new_section_name = NULL;
+
+   bool directories_found[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES] = { 0 };
+   for (uint32_t i = 0; i < image->directory_entries; ++i)
+      directories_found[i] = image->directory[i].Size == 0;
+   directories_found[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY] = true; // special case
+
    for (uint32_t i = 0; i < image->n_sections; ++i) {
       if (image->sections[i].PointerToRelocations != 0 ||
           image->sections[i].NumberOfRelocations != 0) {
@@ -612,14 +611,18 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          last_virtual_address_end = last_virtual_address + image->sections[i].Misc.VirtualSize;
          section_name = new_section_name;
 
-         if (!directory_in_section(debug_directory, image->sections + i, &debug_directory_found))
-             return false;
+         for (uint32_t j = 0; j < image->directory_entries; ++j)
+            if (j != EFI_IMAGE_DIRECTORY_ENTRY_SECURITY &&
+                !directory_in_section(image->directory[j], &image->sections[i], &directories_found[j], j, i))
+               return false;
       }
    }
 
-   if (!debug_directory_found) {
-       LOG("Debug directory present, but not in any section");
-       return false;
+   for (uint32_t i = 0; i < image->directory_entries; ++i) {
+      if (!directories_found[i]) {
+         LOG("Directory %" PRIu32 " present, but not in any section", i);
+         return false;
+      }
    }
 
    uint32_t untrusted_signature_size = 0;
