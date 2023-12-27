@@ -173,14 +173,14 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
                               uint32_t *number_of_sections,
                               uint32_t *optional_header_size)
 {
-   if (!(untrusted_file_header->Characteristics & 0x2)) {
+   if (!(untrusted_file_header->Characteristics & EFI_IMAGE_FILE_EXECUTABLE_IMAGE)) {
       LOG("File is not executable");
       return false;
    }
-   if (untrusted_file_header->Characteristics & 0x1) {
+   if (untrusted_file_header->Characteristics & EFI_IMAGE_FILE_RELOCS_STRIPPED) {
       LOG("Relocations stripped from image");
    }
-   if (untrusted_file_header->Characteristics & 0x2000) {
+   if (untrusted_file_header->Characteristics & EFI_IMAGE_FILE_DLL) {
       LOG("DLL cannot be executable");
    }
    if (untrusted_file_header->PointerToSymbolTable ||
