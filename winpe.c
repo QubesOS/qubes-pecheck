@@ -429,8 +429,8 @@ directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
    // Overflow is not possible: checked by pe_parse.
    uint32_t const section_end = section_header->Misc.VirtualSize + section_header->VirtualAddress;
 
-   if (section_header->VirtualAddress <= directory_end &&
-       directory.VirtualAddress <= section_end) {
+   if (section_header->VirtualAddress < directory_end &&
+       directory.VirtualAddress < section_end) {
       if (section_header->PointerToRawData == 0) {
          LOG("Data directory is located in an unmapped section");
          return false;
