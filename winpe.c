@@ -121,20 +121,6 @@ validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
    case '\0':
       LOG("Empty section name not allowed");
       return false;
-   case '.':
-      for (j = 1; j < sizeof(section->Name); ++j) {
-         if (name[j] == '\0')
-            break;
-         if (name[j] == '$') {
-            LOG("$ not allowed in image section names");
-            return false;
-         }
-         if (name[j] <= ' ' || name[j] > '~') {
-            LOG("Invalid byte %" PRIu8 " in section name", name[j]);
-            return false;
-         }
-      }
-      break;
    case '/':
       if (name[1] == '0' && name[2] == '\0') {
          j = 2;
@@ -158,8 +144,19 @@ validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
       }
       break;
    default:
-      LOG("Invalid start of section name");
-      return false;
+      for (j = 0; j < sizeof(section->Name); ++j) {
+         if (name[j] == '\0')
+            break;
+         if (name[j] == '$') {
+            LOG("$ not allowed in image section names");
+            return false;
+         }
+         if (name[j] <= ' ' || name[j] > '~') {
+            LOG("Invalid byte %" PRIu8 " in section name", name[j]);
+            return false;
+         }
+      }
+      break;
    }
    for (uint8_t k = j; k < sizeof(section->Name); ++k) {
       if (name[k] != '\0') {
