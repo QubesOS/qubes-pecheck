@@ -202,6 +202,9 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
       return false;
    }
 
+   // This is technically redundant, as parse_optional_header() will
+   // always fail if the optional header size is not a multiple of 8.
+   // Nevertheless, it is included for defense in depth.
    if (SizeOfOptionalHeader & 7) {
       LOG("Optional header size 0x%" PRIx16 " not multiple of 8",
           SizeOfOptionalHeader);
@@ -533,7 +536,6 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                           &optional_header_size)) {
       return false;
    }
-   image->sections = (const EFI_IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
 
    /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
    uint32_t const nt_header_end = nt_header_size + nt_header_offset;
@@ -545,6 +547,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                               optional_header_size,
                               &max_address))
       return false;
+   image->sections = (const EFI_IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
    for (uint32_t i = nt_header_end; i < image->size_of_headers; ++i) {
       if (ptr[i]) {
          LOG("Non-zero byte at offset 0x%" PRIx32 " that should be zero", i);
