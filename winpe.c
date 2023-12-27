@@ -18,11 +18,9 @@ static_assert(sizeof(EFI_IMAGE_SECTION_HEADER) == 8 + 4 * 6 + 2 * 2 + 4,
               "EFI_IMAGE_SECTION_HEADER has padding?");
 
 
-#define OPTIONAL_HEADER_OFFSET32 (offsetof(EFI_IMAGE_NT_HEADERS32, OptionalHeader))
-#define OPTIONAL_HEADER_OFFSET64 (offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader))
+#define OPTIONAL_HEADER_OFFSET UINT32_C(24)
 
-static_assert(OPTIONAL_HEADER_OFFSET32 == sizeof(uint32_t) + sizeof(EFI_IMAGE_FILE_HEADER), "unexpected padding");
-static_assert(OPTIONAL_HEADER_OFFSET64 == sizeof(uint32_t) + sizeof(EFI_IMAGE_FILE_HEADER), "IMAGE_NT_HEADERS32 and IMAGE_NT_HEADERS64 must not have padding");
+static_assert(OPTIONAL_HEADER_OFFSET == sizeof(uint32_t) + sizeof(EFI_IMAGE_FILE_HEADER), "unexpected padding");
 static_assert(alignof(EFI_IMAGE_FILE_HEADER) == 4,
               "wrong defintion of EFI_IMAGE_FILE_HEADER");
 static_assert(alignof(EFI_IMAGE_NT_HEADERS32) == 4,
@@ -33,7 +31,6 @@ static_assert(offsetof(EFI_IMAGE_NT_HEADERS32, FileHeader) == 4,
               "wrong definition of IMAGE_NT_HEADERS32");
 static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, FileHeader) == 4,
               "wrong definition of IMAGE_NT_HEADERS64");
-static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header");
 
 #define MIN_FILE_ALIGNMENT (UINT32_C(32))
 #define MIN_OPTIONAL_HEADER_SIZE (offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory))
@@ -229,7 +226,7 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
     */
    uint32_t const untrusted_nt_headers_size =
       (NumberOfSections * (uint32_t)sizeof(EFI_IMAGE_SECTION_HEADER)) +
-      ((uint32_t)OPTIONAL_HEADER_OFFSET32 + SizeOfOptionalHeader);
+      (OPTIONAL_HEADER_OFFSET + SizeOfOptionalHeader);
    /* sanitize NT headers size start */
    if (nt_len <= untrusted_nt_headers_size) {
       LOG("Section headers do not fit in image");
@@ -519,7 +516,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       return false;
    }
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
-   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET32;
+   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET;
 
    uint32_t nt_header_size, optional_header_size;
    if (!parse_file_header(&untrusted_pe_header->Pe32.FileHeader,
