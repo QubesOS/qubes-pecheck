@@ -201,6 +201,7 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
           SizeOfOptionalHeader, MAX_OPTIONAL_HEADER_SIZE);
       return false;
    }
+
    if (SizeOfOptionalHeader & 7) {
       LOG("Optional header size 0x%" PRIx16 " not multiple of 8",
           SizeOfOptionalHeader);
@@ -328,6 +329,7 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
    switch (untrusted_pe_header->Pe32.OptionalHeader.Magic) {
    case EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC:
       LOG("This is a PE32 file: magic 0x10b");
+      // Optional header length checked to be large enough by parse_file_header()
       static_assert(offsetof(EFI_IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
       static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96, "wrong size");
       min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory);
@@ -341,6 +343,11 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
       break;
    case EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC:
       LOG("This is a PE32+ file: magic 0x20b");
+      if (optional_header_size < offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory)) {
+          LOG("Optional header too short for PE32+ file: got %" PRIu32 ", expected at least 112",
+              optional_header_size);
+          return false;
+      }
       static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
       static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112, "wrong size");
       min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory);
