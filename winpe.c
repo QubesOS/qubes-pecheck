@@ -378,6 +378,15 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
           untrusted_number_of_directory_entries, EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES);
       return false;
    }
+
+   uint32_t const expected_optional_header_size =
+      untrusted_number_of_directory_entries * sizeof(EFI_IMAGE_DATA_DIRECTORY) +
+      min_size_of_optional_header;
+   if (optional_header_size != expected_optional_header_size) {
+      LOG("Wrong optional header size: got %" PRIu32 " but computed %" PRIu32,
+          optional_header_size, expected_optional_header_size);
+      return false;
+   }
    image->directory_entries = untrusted_number_of_directory_entries;
    /* sanitize directory entry number end */
 
@@ -407,15 +416,6 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
    }
    image->size_of_headers = untrusted_size_of_headers;
    /* sanitize SizeOfHeaders end */
-
-   uint32_t const expected_optional_header_size =
-      image->directory_entries * sizeof(EFI_IMAGE_DATA_DIRECTORY) +
-      min_size_of_optional_header;
-   if (optional_header_size != expected_optional_header_size) {
-      LOG("Wrong optional header size: got %" PRIu32 " but computed %" PRIu32,
-          optional_header_size, expected_optional_header_size);
-      return false;
-   }
 
    return validate_data_directories(image->directory, image->directory_entries);
 }
