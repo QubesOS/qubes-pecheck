@@ -46,7 +46,7 @@ static_assert(OPTIONAL_HEADER_OFFSET64 == 24, "wrong offset of optional header")
  * guaranteed to be in bounds.  However, not all of it might actually be
  * valid.  Accessing invalid members (such as a nonexistent data directory)
  * will produce garbage from other parts of the PE file.  It will not
- * result in undefined behavior or a * memory access violation.
+ * result in undefined behavior or a memory access violation.
  *
  * \return The pointer on success, or NULL on failure.
  */
@@ -96,8 +96,6 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
          return NULL;
       }
 
-      if (0)
-         LOG("Skipping DOS header of %" PRIu32 " bytes", nt_header_offset);
       if (memcmp(ptr + nt_header_offset, "PE\0", 4) != 0) {
          LOG("Bad magic for NT header at offset 0x%" PRIx32, nt_header_offset);
          return false;
