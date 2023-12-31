@@ -464,9 +464,9 @@ directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
    return true;
 }
 
-bool signature_section_check(const uint8_t *const ptr, size_t const len)
+bool signature_section_check(const uint8_t *const signature, size_t const len)
 {
-   if (!ADDRESS_IS_ALIGNED(ptr, 8))
+   if (!ADDRESS_IS_ALIGNED(signature, 8) || len > (size_t)(INT32_MAX & ~7))
       return false;
 
    if (!IS_ALIGNED(len, 8)) {
@@ -474,48 +474,44 @@ bool signature_section_check(const uint8_t *const ptr, size_t const len)
       return false;
    }
 
-   /* Alignment is guaranteed initially because signature_offset was checked to be a
-    * multiple of 8.  Alignment will be maintained because sig->length is rounded up to
-    * the next multiple of 8.  This will not cause out-of-bounds memory access because
-    * signature_len is checked to be a multiple of 8.
-    */
-   const uint8_t *current_pointer = ptr;
-   size_t remaining = len;
    uint64_t const zero = 0;
+   const uint8_t *current_pointer = signature;
+   const uint8_t *const end = signature + len;
    do {
-      if (len < sizeof(WIN_CERTIFICATE)) {
-         LOG("Signature too small (got 0x%zx, minimum 8", len);
+      WIN_CERTIFICATE sig;
+      if (end - current_pointer < (ptrdiff_t)sizeof(sig)) {
+         LOG("Signature too small (got 0x%zx, minimum 8", (size_t)(end - current_pointer));
          return false;
       }
-      const WIN_CERTIFICATE *sig = (const WIN_CERTIFICATE *)current_pointer;
-      if (sig->wRevision != 0x0200) {
-         LOG("Wrong signature version 0x%" PRIx16, sig->wRevision);
+      const size_t remaining_bytes = (size_t)(end - current_pointer);
+      memcpy(&sig, current_pointer, sizeof(sig));
+      if (sig.wRevision != 0x0200) {
+         LOG("Wrong signature version 0x%" PRIx16, sig.wRevision);
          return false;
       }
-      if (sig->wCertificateType != WIN_CERT_TYPE_PKCS_SIGNED_DATA) {
-         LOG("Wrong signature type 0x%" PRIx16, sig->wCertificateType);
+      if (sig.wCertificateType != WIN_CERT_TYPE_PKCS_SIGNED_DATA) {
+         LOG("Wrong signature type 0x%" PRIx16, sig.wCertificateType);
          return false;
       }
-      if (sig->dwLength > remaining) {
+      if (sig.dwLength > remaining_bytes) {
          LOG("Signature too long: signature is 0x%" PRIx32 " bytes but 0x%zx bytes remaining in signature",
-               sig->dwLength, remaining);
+               sig.dwLength, remaining_bytes);
          return false;
       }
-      if (sig->dwLength < sizeof(*sig)) {
-         LOG("Signature too small (got %" PRIu32 ", minimum %zu)", sig->dwLength, sizeof(*sig));
+      if (sig.dwLength < sizeof(sig)) {
+         LOG("Signature too small (got %" PRIu32 ", minimum %zu)", sig.dwLength, sizeof(sig));
          return false;
       }
       LOG("Signature at offset 0x%zx with length 0x%" PRIx32,
-          len - remaining, sig->dwLength);
-      // remaining is always a multiple of 8, so this is still in bounds.
-      uint32_t new_length = (sig->dwLength + UINT32_C(7)) & ~UINT32_C(7);
-      if (memcmp(&zero, current_pointer + sig->dwLength, new_length - sig->dwLength) != 0) {
+          (size_t)(current_pointer - signature), sig.dwLength);
+      // remaining_bytes is always a multiple of 8, so this is still in bounds.
+      uint32_t new_length = (sig.dwLength + 7) & ~7;
+      if (memcmp(&zero, current_pointer + sig.dwLength, new_length - sig.dwLength) != 0) {
          LOG("Padding in WIN_CERTIFICATE struct is not zeroed");
          return false;
       }
       current_pointer += new_length;
-      remaining -= new_length;
-   } while (remaining > 0);
+   } while (end > current_pointer);
    return true;
 }
 
