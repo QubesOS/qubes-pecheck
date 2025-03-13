@@ -165,8 +165,8 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
           ", number of symbols 0x%" PRIx32,
           untrusted_file_header->PointerToSymbolTable,
           untrusted_file_header->NumberOfSymbols);
+      return false;
    }
-   /* FIXME: sanitize symbol table. */
 
    /* sanitize SizeOfOptionalHeader start */
    uint32_t const SizeOfOptionalHeader = untrusted_file_header->SizeOfOptionalHeader;
