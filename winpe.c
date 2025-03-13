@@ -36,6 +36,58 @@ static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, FileHeader) == 4,
 #define MIN_OPTIONAL_HEADER_SIZE (offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory))
 #define MAX_OPTIONAL_HEADER_SIZE (sizeof(EFI_IMAGE_OPTIONAL_HEADER64))
 
+struct PeBuffer {
+    const uint8_t *ptr;
+    size_t size;
+};
+
+/**
+ * Obtain a pointer to size bytes with alignment align at offset offset.
+ *
+ * Returns NULL on failure, including:
+ *
+ * - The number of bytes is out of bounds.
+ * - The pointer produced would not be aligne.d
+ * - An integer overflow occurred.
+ * - The alignment is not a power of 2.
+ */
+static const void *extract_struct(const struct PeBuffer *const buffer, size_t const offset, size_t const align, size_t const size)
+{
+   if (align < 1 || (align & (align - 1)) != 0) {
+      LOG("BUG: alignment is not a power of 2 (got %zu)", align);
+      return NULL;
+   }
+
+   if (SIZE_MAX - size < offset) {
+      LOG("Size overflow: %zu + %zu > %zu", size, offset, SIZE_MAX);
+      return NULL;
+   }
+
+   size_t const requested_end = size + offset;
+
+   if (requested_end > buffer->size) {
+      LOG("Out of bounds: %zu + %zu > %zu", size, offset, buffer->size);
+      return NULL;
+   }
+
+   const uint8_t *const new_ptr = buffer->ptr + offset;
+   if (((uintptr_t)new_ptr & (align - 1)) != 0) {
+      LOG("Returned pointer would be misaligned");
+      return NULL;
+   }
+
+   return new_ptr;
+}
+
+#define STRUCT_AT(buffer, offset, ty) \
+   ((const ty *)extract_struct(buffer, offset, _Alignof(ty), sizeof(ty)))
+
+struct dos_header {
+   uint8_t padding[60];
+   uint32_t nt_header_offset;
+};
+static_assert(sizeof(struct dos_header) == 64, "header def bug");
+
 /**
  * Extract the NT header, skipping over any DOS header.
  *
@@ -50,6 +102,8 @@ static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, FileHeader) == 4,
 const EFI_IMAGE_OPTIONAL_HEADER_UNION*
 extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
+   struct PeBuffer b = { .ptr = ptr, .size = len };
+   uint32_t nt_header_offset = 0;
 #define NT_HEADER_OFFSET_LOC UINT32_C(60)
 #define DOS_HEADER_SIZE (NT_HEADER_OFFSET_LOC + sizeof(uint32_t))
    EFI_IMAGE_OPTIONAL_HEADER_UNION const* pe_header;
@@ -72,37 +126,29 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
    }
 
    if (ptr[0] == 'M' && ptr[1] == 'Z') {
-      uint32_t nt_header_offset;
-      /* Skip past DOS header */
-      memcpy(&nt_header_offset, ptr + NT_HEADER_OFFSET_LOC, sizeof(uint32_t));
+      const struct dos_header *dos_hdr = STRUCT_AT(&b, 0, struct dos_header);
+      if (dos_hdr == NULL) {
+         return NULL;
+      }
+      nt_header_offset = dos_hdr->nt_header_offset;
 
-      if (nt_header_offset < DOS_HEADER_SIZE) {
+      if (nt_header_offset < sizeof(*dos_hdr)) {
          LOG("DOS header overlaps NT header (%" PRIu32 " less than %zu)",
-             nt_header_offset, DOS_HEADER_SIZE);
+             nt_header_offset, sizeof(*dos_hdr));
          return NULL;
       }
 
-      if (nt_header_offset > len - sizeof(*pe_header)) {
-         LOG("DOS header does not leave room for NT header (offset %" PRIu32 ", file size %zu)",
-             nt_header_offset, len);
-         return NULL;
-      }
-
-      if (!IS_ALIGNED(nt_header_offset, alignof(EFI_IMAGE_OPTIONAL_HEADER_UNION))) {
-         LOG("NT header not 8-byte aligned (offset %" PRIi32 ")", nt_header_offset);
-         return NULL;
-      }
-
-      if (memcmp(ptr + nt_header_offset, "PE\0", 4) != 0) {
-         LOG("Bad magic for NT header at offset 0x%" PRIx32, nt_header_offset);
-         return false;
-      }
-      pe_header = (const EFI_IMAGE_OPTIONAL_HEADER_UNION *)(ptr + nt_header_offset);
-   } else if (memcmp(ptr, "PE\0", 4) != 0) {
-      LOG("Image has neither DOS nor NT magic at start");
-      pe_header = NULL;
+      pe_header = STRUCT_AT(&b, nt_header_offset, EFI_IMAGE_OPTIONAL_HEADER_UNION);
    } else {
-      pe_header = (const EFI_IMAGE_OPTIONAL_HEADER_UNION *)ptr;
+      pe_header = STRUCT_AT(&b, 0, EFI_IMAGE_OPTIONAL_HEADER_UNION);
+   }
+   if (pe_header == NULL) {
+      return NULL;
+   }
+
+   if (memcmp(pe_header, "PE\0", 4) != 0) {
+      LOG("Bad magic for NT header at offset 0x%" PRIx32, nt_header_offset);
+      return NULL;
    }
 
    return pe_header;
