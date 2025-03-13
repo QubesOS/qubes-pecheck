@@ -588,9 +588,11 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                 last_section_start);
             return false;
          }
+         /* It is okay for sections to have data beyond their virtual address size (which is ignored),
+          * but not the other way around. */
          if (image->sections[i].SizeOfRawData < image->sections[i].Misc.VirtualSize) {
-            LOG("Section %" PRIu32 " has size 0x%" PRIx32 " in the file, but "
-                "0x%" PRIx32 " in memory", i, image->sections[i].SizeOfRawData,
+            LOG("Section %" PRIu32 " (name %.8s) has size 0x%" PRIx32 " in the file, but "
+                "0x%" PRIx32 " in memory", i, new_section_name, image->sections[i].SizeOfRawData,
                 image->sections[i].Misc.VirtualSize);
             return false;
          }
