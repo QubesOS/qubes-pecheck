@@ -114,46 +114,25 @@ validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
    /* Validate section name */
    const uint8_t *name = section->Name;
    uint32_t j;
-   switch (name[0]) {
-   case '\0':
-      LOG("Empty section name not allowed");
+   if (name[0] != '.') {
+      LOG("Section name does not begin with '.'");
       return false;
-   case '/':
-      if (name[1] == '0' && name[2] == '\0') {
-         j = 2;
+   }
+   for (j = 1; j < sizeof(section->Name); ++j) {
+      if (name[j] == '\0')
          break;
-      }
-      if (name[1] < '1' || name[1] > '9') {
-         LOG("Invalid first byte in long section name number");
+      if (name[j] == '$') {
+         LOG("$ not allowed in image section names");
          return false;
       }
-      if (name[sizeof(section->Name) - 1] != '\0') {
-         LOG("String table index not NUL terminated");
+      if (!((name[j] >= 'a' && name[j] <= 'z') ||
+            (name[j] >= 'A' && name[j] <= 'Z') ||
+            (name[j] >= '0' && name[j] <= '9') ||
+            (name[j] == '.') || (name[j] == '-') ||
+            (name[j] == '_'))) {
+         LOG("Invalid byte %" PRIu8 " in section name", name[j]);
          return false;
       }
-      for (j = 2; j < sizeof(section->Name) - 1; ++j) {
-         if (name[j] == '\0')
-            break;
-         if (name[j] < '0' || name[j] > '9') {
-            LOG("Invalid byte in long section name");
-            return false;
-         }
-      }
-      break;
-   default:
-      for (j = 0; j < sizeof(section->Name); ++j) {
-         if (name[j] == '\0')
-            break;
-         if (name[j] == '$') {
-            LOG("$ not allowed in image section names");
-            return false;
-         }
-         if (name[j] <= ' ' || name[j] > '~') {
-            LOG("Invalid byte %" PRIu8 " in section name", name[j]);
-            return false;
-         }
-      }
-      break;
    }
    for (uint8_t k = j; k < sizeof(section->Name); ++k) {
       if (name[k] != '\0') {
