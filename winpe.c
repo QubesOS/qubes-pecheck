@@ -51,19 +51,22 @@ struct PeBuffer {
  * - An integer overflow occurred.
  * - The alignment is not a power of 2.
  */
-static const void *extract_struct(const struct PeBuffer *const buffer, size_t const offset, size_t const align, size_t const size)
+static const void *extract_struct_count(const struct PeBuffer *const buffer,
+                                        size_t const offset, size_t const align,
+                                        size_t const size, size_t const count)
 {
-   if (align < 1 || (align & (align - 1)) != 0) {
-      LOG("BUG: alignment is not a power of 2 (got %zu)", align);
-      return NULL;
+   assert(IS_POW2(align) && "Alignment is not a power of 2");
+
+   size_t total_size, requested_end;
+   if (__builtin_mul_overflow(size, count, &total_size)) {
+       LOG("Size overflow: %zu * %zu > %zu", size, count, SIZE_MAX);
+       return NULL;
    }
 
-   if (SIZE_MAX - size < offset) {
-      LOG("Size overflow: %zu + %zu > %zu", size, offset, SIZE_MAX);
+   if (__builtin_add_overflow(total_size, offset, &requested_end)) {
+      LOG("Size overflow: %zu + %zu > %zu", total_size, offset, SIZE_MAX);
       return NULL;
    }
-
-   size_t const requested_end = size + offset;
 
    if (requested_end > buffer->size) {
       LOG("Out of bounds: %zu + %zu > %zu", size, offset, buffer->size);
@@ -80,7 +83,10 @@ static const void *extract_struct(const struct PeBuffer *const buffer, size_t co
 }
 
 #define STRUCT_AT(buffer, offset, ty) \
-   ((const ty *)extract_struct(buffer, offset, _Alignof(ty), sizeof(ty)))
+   ((const ty *)extract_struct_count(buffer, offset, _Alignof(ty), sizeof(ty), 1))
+
+#define STRUCT_AT_COUNT(buffer, offset, ty, count) \
+   ((const ty *)extract_struct_count(buffer, offset, _Alignof(ty), sizeof(ty), count))
 
 struct dos_header {
    uint8_t padding[60];
@@ -522,10 +528,7 @@ bool signature_section_check(const uint8_t *const signature, size_t const len)
          return false;
       }
       const size_t remaining_bytes = (size_t)(end - current_pointer);
-      if (!IS_ALIGNED(remaining_bytes, 8)) {
-          LOG("BUG: remaining bytes not multiple of 8!");
-          abort();
-      }
+      assert(IS_ALIGNED(remaining_bytes, 8) && "remaining bytes not multiple of 8!");
       memcpy(&sig, current_pointer, sizeof(sig));
       if (sig.wRevision != 0x0200) {
          LOG("Wrong signature version 0x%" PRIx16, sig.wRevision);
@@ -564,11 +567,14 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       return false;
    }
    uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
-   const uint8_t *const optional_header = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET;
+   const struct PeBuffer remainder = {
+       .ptr = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET,
+       .size = (uint32_t)len - (nt_header_offset + OPTIONAL_HEADER_OFFSET),
+   };
 
    uint32_t nt_header_size, optional_header_size;
    if (!parse_file_header(&untrusted_pe_header->Pe32.FileHeader,
-                          (uint32_t)len - nt_header_offset,
+                          remainder.size,
                           &nt_header_size,
                           &image->n_sections,
                           &optional_header_size)) {
@@ -583,9 +589,11 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                               (uint32_t)len,
                               nt_header_end,
                               optional_header_size,
-                              &max_address))
+                              &max_address)) {
       return false;
-   image->sections = (const EFI_IMAGE_SECTION_HEADER *)(optional_header + optional_header_size);
+   }
+   image->sections = STRUCT_AT_COUNT(&remainder, optional_header_size, EFI_IMAGE_SECTION_HEADER, image->n_sections);
+   assert(image->sections);
    for (uint32_t i = nt_header_end; i < image->size_of_headers; ++i) {
       if (ptr[i]) {
          LOG("Non-zero byte at offset 0x%" PRIx32 " that should be zero", i);
@@ -710,12 +718,9 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                 i, image->sections[i].Name, untrusted_virtual_address, alignment);
             return false;
          }
-      } else {
-         LOG("Section %" PRIu32 " (%.8s) does not specify alignment",
-             i, image->sections[i].Name);
-         return false;
       }
-      if (untrusted_characteristics & (EFI_IMAGE_SCN_CNT_CODE|EFI_IMAGE_SCN_CNT_INITIALIZED_DATA|EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
+      if (untrusted_characteristics &
+          (EFI_IMAGE_SCN_CNT_CODE|EFI_IMAGE_SCN_CNT_INITIALIZED_DATA|EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
          /* First section in memory must be aligned.  Subsequent ones do not need to be. */
          if (last_virtual_address == 0 && !IS_ALIGNED(untrusted_virtual_address, image->section_alignment)) {
             LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
@@ -732,8 +737,10 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          if (untrusted_virtual_address < last_virtual_address_end) {
             assert(new_section_name != NULL);
             assert(section_name != NULL);
-            LOG("Sections %.8s (%" PRIu32 ") and %.8s (%" PRIu32 ") overlap in memory: 0x%" PRIx64 " in [0x%" PRIx64 ", 0x%" PRIx64 ")",
-                section_name, i - 1, new_section_name, i, untrusted_virtual_address, last_virtual_address, last_virtual_address_end);
+            LOG("Sections %.8s (%" PRIu32 ") and %.8s (%" PRIu32 ") overlap in memory: 0x%" PRIx64
+                " in [0x%" PRIx64 ", 0x%" PRIx64 ")",
+                section_name, i - 1, new_section_name, i, untrusted_virtual_address,
+                last_virtual_address, last_virtual_address_end);
             return false;
          }
          last_virtual_address = untrusted_virtual_address;
