@@ -685,7 +685,19 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
              i, untrusted_characteristics);
          return false;
       }
-      if ((untrusted_characteristics & (pe_section_code|pe_section_initialized_data|pe_section_uninitialized_data))) {
+      if ((untrusted_characteristics & pe_section_initialized_data) &&
+          (untrusted_characteristics & pe_section_uninitialized_data)) {
+         LOG("Section %" PRIu32 "(%.8s) is both initialized and uninitialized data",
+             i, image->sections[i].Name);
+         return false;
+      }
+      if ((untrusted_characteristics & pe_section_code) &&
+          (untrusted_characteristics & pe_section_uninitialized_data)) {
+         LOG("Section %" PRIu32 "(%.8s) is both code and uninitialized data",
+             i, image->sections[i].Name);
+         return false;
+      }
+      if (untrusted_characteristics & (pe_section_code|pe_section_initialized_data|pe_section_uninitialized_data)) {
          /* First section in memory must be aligned.  Subsequent ones do not need to be. */
          if (last_virtual_address == 0 && !IS_ALIGNED(untrusted_virtual_address, image->section_alignment)) {
             LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
