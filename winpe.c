@@ -710,6 +710,10 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                 i, image->sections[i].Name, untrusted_virtual_address, alignment);
             return false;
          }
+      } else {
+         LOG("Section %" PRIu32 " (%.8s) does not specify alignment",
+             i, image->sections[i].Name);
+         return false;
       }
       if (untrusted_characteristics & (EFI_IMAGE_SCN_CNT_CODE|EFI_IMAGE_SCN_CNT_INITIALIZED_DATA|EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
          /* First section in memory must be aligned.  Subsequent ones do not need to be. */
