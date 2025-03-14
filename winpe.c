@@ -703,8 +703,8 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          return false;
       }
       if (untrusted_characteristics & EFI_IMAGE_SCN_ALIGN_64BYTES) {
-          uint32_t alignment = 1U << (((untrusted_characteristics & EFI_IMAGE_SCN_ALIGN_64BYTES) >> 20) - 1);
-          if (!IS_ALIGNED(untrusted_virtual_address, alignment)) {
+         uint32_t alignment = 1U << (((untrusted_characteristics & EFI_IMAGE_SCN_ALIGN_64BYTES) >> 20) - 1);
+         if (!IS_ALIGNED(untrusted_virtual_address, alignment)) {
             LOG("Section %" PRIu32 " (%.8s) has misaligned VMA for its own alignment: 0x%" PRIx64
                 " not aligned to 0x%" PRIx32,
                 i, image->sections[i].Name, untrusted_virtual_address, alignment);
