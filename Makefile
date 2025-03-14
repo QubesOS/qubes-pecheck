@@ -6,6 +6,11 @@ MANDATORY_CFLAGS := -fno-strict-aliasing -Werror=format \
 						  -pedantic-errors
 TARGET = '$(subst ','\'',$@)'#
 SOURCE = '$(subst ','\'',$<)'#
+ifeq "$(CC)" "gcc"
+WARNINGS := gcc
+else ifeq "$(CC)" "clang"
+WARNINGS := clang
+endif
 ifeq "$(WARNINGS)" "clang"
 EXTRA_CFLAGS := -fsanitize=undefined -fsanitize-minimal-runtime  \
 	-fPIC -Weverything -Wno-c++98-compat \
