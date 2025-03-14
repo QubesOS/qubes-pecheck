@@ -27,10 +27,10 @@ endif
 LINK = $(CC) -Wl,-z,relro,-z,now $(EXTRA_CFLAGS) $(CFLAGS) $(MANDATORY_CFLAGS) -Wall -Wextra -o $(TARGET) $^
 %.o: %.c Makefile
 	$(CC) $(EXTRA_CFLAGS) $(CFLAGS) $(MANDATORY_CFLAGS) -Wall -Wextra -MD -MP -MF $(TARGET).dep -c -o $(TARGET) $(SOURCE)
-all: winpe
+all: pecheck
 check: test-winpe
 	./test-winpe
-winpe: winpe.o main.o
+pecheck: winpe.o main.o
 	$(LINK)
 test-winpe: winpe.o test.o
 	$(LINK)
