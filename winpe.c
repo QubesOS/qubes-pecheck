@@ -673,10 +673,6 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          return false;
       }
       uint64_t const untrusted_virtual_address = image->sections[i].VirtualAddress + image->image_base;
-      if (!IS_ALIGNED(untrusted_virtual_address, image->section_alignment)) {
-         LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
-             i, image->sections[i].Name, untrusted_virtual_address, image->section_alignment);
-      }
       if (max_address - untrusted_virtual_address < image->sections[i].Misc.VirtualSize) {
          LOG("Virtual address overflow: 0x%" PRIx64 " + 0x%" PRIx32 " > 0x%" PRIx64,
              untrusted_virtual_address, image->sections[i].Misc.VirtualSize, max_address);
@@ -690,6 +686,12 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          return false;
       }
       if ((untrusted_characteristics & (pe_section_code|pe_section_initialized_data|pe_section_uninitialized_data))) {
+         /* First section in memory must be aligned.  Subsequent ones do not need to be. */
+         if (last_virtual_address == 0 && !IS_ALIGNED(untrusted_virtual_address, image->section_alignment)) {
+            LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
+                i, image->sections[i].Name, untrusted_virtual_address, image->section_alignment);
+            return false;
+         }
          if (untrusted_virtual_address < last_virtual_address) {
             assert(new_section_name != NULL);
             assert(section_name != NULL);
