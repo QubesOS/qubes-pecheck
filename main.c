@@ -12,7 +12,7 @@ int main(int argc, char **argv)
    if (argc < 0)
       abort();
    if (argc < 2) {
-      LOG("Bad number of arguments: expected at least 1 but got %d", argc - 1);
+      LOG("No PE files passed to be checked");
       return EXIT_FAILURE;
    }
    for (int i = 1; i < argc; ++i) {
