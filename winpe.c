@@ -232,7 +232,7 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
    // This is technically redundant, as parse_optional_header() will
    // always fail if the optional header size is not a multiple of 8.
    // Nevertheless, it is included for defense in depth.
-   if (SizeOfOptionalHeader & 7) {
+   if (!IS_ALIGNED(SizeOfOptionalHeader, 8)) {
       LOG("Optional header size 0x%" PRIx16 " not multiple of 8",
           SizeOfOptionalHeader);
       return false;
@@ -542,7 +542,7 @@ bool signature_section_check(const uint8_t *const signature, size_t const len)
       LOG("Signature at offset 0x%zx with length 0x%" PRIx32,
           (size_t)(current_pointer - signature), sig.dwLength);
       // remaining_bytes is always a multiple of 8, so this is still in bounds.
-      uint32_t new_length = (sig.dwLength + 7) & ~7;
+      uint32_t new_length = (sig.dwLength + UINT32_C(7)) & ~UINT32_C(7);
       if (memcmp(&zero, current_pointer + sig.dwLength, new_length - sig.dwLength) != 0) {
          LOG("Padding in WIN_CERTIFICATE struct is not zeroed");
          return false;
