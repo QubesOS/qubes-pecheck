@@ -483,6 +483,12 @@ directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
          return false;
       }
 
+      if ((section_header->Characteristics & (pe_section_code|pe_section_initialized_data)) == 0) {
+          LOG("Directory %" PRIu32 " is in section that is not loaded into memory",
+              directory_index);
+          return false;
+      }
+
       if (found != NULL)
          *found = true;
    }
