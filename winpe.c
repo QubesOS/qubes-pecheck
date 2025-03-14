@@ -722,10 +722,16 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          last_virtual_address_end = last_virtual_address + image->sections[i].Misc.VirtualSize;
          section_name = new_section_name;
 
-         for (uint32_t j = 0; j < image->directory_entries; ++j)
-            if (j != EFI_IMAGE_DIRECTORY_ENTRY_SECURITY &&
-                !directory_in_section(image->directory[j], &image->sections[i], &directories_found[j], j, i))
+         for (uint32_t j = 0; j < image->directory_entries; ++j) {
+            /* Security directory is special. */
+            if (j == EFI_IMAGE_DIRECTORY_ENTRY_SECURITY) {
+               continue;
+            }
+
+            if (!directory_in_section(image->directory[j], &image->sections[i], &directories_found[j], j, i)) {
                return false;
+            }
+         }
       }
    }
 
