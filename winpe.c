@@ -205,6 +205,7 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
    }
    if (untrusted_file_header->Characteristics & EFI_IMAGE_FILE_DLL) {
       LOG("DLL cannot be executable");
+      return false;
    }
    if (untrusted_file_header->PointerToSymbolTable ||
        untrusted_file_header->NumberOfSymbols) {
