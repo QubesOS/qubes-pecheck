@@ -683,7 +683,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
              untrusted_virtual_address, image->sections[i].Misc.VirtualSize, max_address);
          return false;
       }
-      LOG("Section %" PRIu32 "(name %.8s) has flags 0x%" PRIx32, i, new_section_name, image->sections[i].Characteristics);
+      LOG("Section %" PRIu32 " (name %.8s) has flags 0x%" PRIx32, i, new_section_name, image->sections[i].Characteristics);
       uint32_t untrusted_characteristics = image->sections[i].Characteristics;
       if ((untrusted_characteristics & pe_section_reserved_bits) != 0) {
          LOG("Section %" PRIu32 ": characteristics 0x%08" PRIx32 " has reserved bits",
