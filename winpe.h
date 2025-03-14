@@ -33,7 +33,7 @@ struct ParsedImage {
 };
 
 enum {
-    pe_section_reserved_bits = 0xF6517,
+    pe_section_reserved_bits = 0xF6D1F,
 };
 
 bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image);
