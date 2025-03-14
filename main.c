@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <errno.h>
 #include <err.h>
 
 int main(int argc, char **argv)
@@ -27,8 +28,16 @@ int main(int argc, char **argv)
       uint8_t *fbuf = malloc(size);
       if (!fbuf)
          err(1, "malloc(%zu)", size);
-      if ((size_t)read(p, fbuf, size) != size)
-         err(1, "read()");
+      size_t data_read = 0;
+      while (data_read < size) {
+          ssize_t bytes_read = read(p, fbuf + data_read, size - data_read);
+          if (bytes_read < 0) {
+              if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                  continue;
+              err(1, "read");
+          }
+          data_read += (size_t)bytes_read;
+      }
       struct ParsedImage image;
       if (!pe_parse(fbuf, size, &image))
          errx(1, "bad PE file");
