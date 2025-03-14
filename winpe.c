@@ -517,6 +517,10 @@ bool signature_section_check(const uint8_t *const signature, size_t const len)
          return false;
       }
       const size_t remaining_bytes = (size_t)(end - current_pointer);
+      if (!IS_ALIGNED(remaining_bytes, 8)) {
+          LOG("BUG: remaining bytes not multiple of 8!");
+          abort();
+      }
       memcpy(&sig, current_pointer, sizeof(sig));
       if (sig.wRevision != 0x0200) {
          LOG("Wrong signature version 0x%" PRIx16, sig.wRevision);
