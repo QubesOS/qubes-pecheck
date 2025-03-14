@@ -18,7 +18,7 @@ static void test_dos_header(void) {
    assert(extract_pe_header(header, 0x7FFFFFFFUL + 1) == NULL);
    // Corrupt the NT header magic
    uint32_t nt_offset = 128;
-   memcpy(header + 60, &nt_offset, 4);
+   memcpy(header + offsetof(EFI_IMAGE_DOS_HEADER, e_lfanew), &nt_offset, 4);
    memcpy(header + nt_offset, "PE\0", 4);
    header[0] = 'M';
    assert((void *)extract_pe_header(header, sizeof header - 128) == NULL);

@@ -104,10 +104,9 @@ extract_pe_header(const uint8_t *const ptr, size_t const len)
 {
    struct PeBuffer b = { .ptr = ptr, .size = len };
    uint32_t nt_header_offset = 0;
-#define NT_HEADER_OFFSET_LOC UINT32_C(60)
-#define DOS_HEADER_SIZE (NT_HEADER_OFFSET_LOC + sizeof(uint32_t))
+#define NT_HEADER_OFFSET_LOC ((uint32_t)(offsetof(EFI_IMAGE_DOS_HEADER, e_lfanew)))
    EFI_IMAGE_OPTIONAL_HEADER_UNION const* pe_header;
-   static_assert(DOS_HEADER_SIZE < sizeof(*pe_header),
+   static_assert(sizeof(*pe_header) >= sizeof(EFI_IMAGE_DOS_HEADER),
                  "NT header shorter than DOS header?");
 
    if (len < sizeof(*pe_header)) {
@@ -273,17 +272,23 @@ static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header
    return true;
 }
 
+#define MAX_IN_MEMORY_ALIGNMENT (1UL << 16)
+#define MIN_SECTION_ALIGNMENT (1UL << 12)
+#define MAX_SECTION_ALIGNMENT (1UL << 16)
+#define MIN_BASE_ALIGNMENT (1UL << 16)
 static bool
 validate_image_base_and_alignment(uint64_t const image_base,
                                   uint32_t const file_alignment,
                                   uint32_t const section_alignment)
 {
-   if (image_base % (1UL << 16)) {
-      LOG("Image base 0x%" PRIx64 " not multiple of 0x%x", image_base, 1U << 16);
+   if (image_base % MIN_BASE_ALIGNMENT) {
+      LOG("Image base 0x%" PRIx64 " not multiple of 0x%lx", image_base,
+          MIN_BASE_ALIGNMENT);
       return false;
    }
-   if (section_alignment < (1U << 12)) {
-      LOG("Section alignment too small (0x%" PRIx32 " < 0x%x)", section_alignment, 1U << 12);
+   if (section_alignment < MIN_SECTION_ALIGNMENT) {
+      LOG("Section alignment too small (0x%" PRIx32 " < 0x%lx)", section_alignment,
+          MIN_SECTION_ALIGNMENT);
       return false;
    }
    /*
@@ -484,7 +489,7 @@ directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
          return false;
       }
 
-      if ((section_header->Characteristics & (pe_section_code|pe_section_initialized_data)) == 0) {
+      if ((section_header->Characteristics & (EFI_IMAGE_SCN_CNT_CODE|EFI_IMAGE_SCN_CNT_INITIALIZED_DATA)) == 0) {
           LOG("Directory %" PRIu32 " is in section that is not loaded into memory",
               directory_index);
           return false;
@@ -685,19 +690,19 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
              i, untrusted_characteristics);
          return false;
       }
-      if ((untrusted_characteristics & pe_section_initialized_data) &&
-          (untrusted_characteristics & pe_section_uninitialized_data)) {
+      if ((untrusted_characteristics & EFI_IMAGE_SCN_CNT_INITIALIZED_DATA) &&
+          (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
          LOG("Section %" PRIu32 "(%.8s) is both initialized and uninitialized data",
              i, image->sections[i].Name);
          return false;
       }
-      if ((untrusted_characteristics & pe_section_code) &&
-          (untrusted_characteristics & pe_section_uninitialized_data)) {
+      if ((untrusted_characteristics & EFI_IMAGE_SCN_CNT_CODE) &&
+          (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
          LOG("Section %" PRIu32 "(%.8s) is both code and uninitialized data",
              i, image->sections[i].Name);
          return false;
       }
-      if (untrusted_characteristics & (pe_section_code|pe_section_initialized_data|pe_section_uninitialized_data)) {
+      if (untrusted_characteristics & (EFI_IMAGE_SCN_CNT_CODE|EFI_IMAGE_SCN_CNT_INITIALIZED_DATA|EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
          /* First section in memory must be aligned.  Subsequent ones do not need to be. */
          if (last_virtual_address == 0 && !IS_ALIGNED(untrusted_virtual_address, image->section_alignment)) {
             LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
