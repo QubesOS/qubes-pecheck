@@ -638,6 +638,11 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
             LOG("Misaligned raw data size");
             return false;
          }
+         /* If the next section starts after the previous one ends, the data in
+          * between can be tampered with without invalidating the signature.
+          * This is bad.  All sections must have size and alignment that
+          * are multiple of the file alignment, so it is never necessary to
+          * have alignment padding between sections. */
          if (image->sections[i].PointerToRawData != last_section_start) {
             LOG("Section %" PRIu32 " starts at 0x%" PRIx32 ", but %s at 0x%" PRIx32,
                 i, image->sections[i].PointerToRawData,
