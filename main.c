@@ -6,16 +6,48 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <err.h>
+#include <getopt.h>
 
 int main(int argc, char **argv)
 {
-   if (argc < 0)
-      abort();
    if (argc < 2) {
       LOG("No PE files passed to be checked");
       return EXIT_FAILURE;
    }
-   for (int i = 1; i < argc; ++i) {
+   struct option opts[] = {
+       { "verbose", no_argument, NULL, 'v' },
+       { "no-verbose", no_argument, NULL, 'V' },
+       { "help", no_argument, NULL, 'h' },
+       { NULL, 0, NULL, 0 },
+   };
+   bool verbose = false;
+   for (;;) {
+      int index;
+      int v = getopt_long(argc, argv, "+", opts, &index);
+      switch (v) {
+         case ':':
+         case '?':
+            return EXIT_FAILURE;
+         case 'v':
+            verbose = true;
+            break;
+         case 'V':
+            verbose = false;
+            break;
+         case 'h':
+            fputs("Usage: pechk [--verbose] [--no-verbose] [--] FILE [FILES...]\n", stdout);
+            if (fflush(NULL) || ferror(stdout))
+               errx(1, "I/O error on stdout");
+            return 0;
+         case -1:
+            goto end_of_options;
+         default:
+            assert(0);
+            return EXIT_FAILURE;
+      }
+   }
+end_of_options:
+   for (int i = optind; i < argc; ++i) {
       struct stat buf;
       int p = open(argv[i], O_RDONLY | O_CLOEXEC | O_NOCTTY);
       if (p < 0)
@@ -39,7 +71,7 @@ int main(int argc, char **argv)
           data_read += (size_t)bytes_read;
       }
       struct ParsedImage image;
-      if (!pe_parse(fbuf, size, &image))
+      if (!pe_parse(fbuf, size, &image, verbose))
          errx(1, "bad PE file");
       if (fflush(NULL) || ferror(stdout) || ferror(stderr))
          errx(1, "I/O error");

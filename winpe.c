@@ -359,7 +359,8 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
                                   uint32_t len,
                                   uint32_t nt_header_end,
                                   uint32_t optional_header_size,
-                                  uint64_t *max_address) {
+                                  uint64_t *max_address,
+                                  bool verbose) {
    uint64_t untrusted_image_base;
    uint32_t untrusted_file_alignment;
    uint32_t untrusted_section_alignment;
@@ -369,7 +370,8 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
 
    switch (untrusted_pe_header->Pe32.OptionalHeader.Magic) {
    case EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC:
-      LOG("This is a PE32 file: magic 0x10b");
+      if (verbose)
+         LOG("This is a PE32 file: magic 0x10b");
       // Optional header length checked to be large enough by parse_file_header()
       static_assert(offsetof(EFI_IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
       static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96, "wrong size");
@@ -383,7 +385,8 @@ static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const u
       *max_address = UINT32_MAX;
       break;
    case EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-      LOG("This is a PE32+ file: magic 0x20b");
+      if (verbose)
+         LOG("This is a PE32+ file: magic 0x20b");
       if (optional_header_size < offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory)) {
           LOG("Optional header too short for PE32+ file: got %" PRIu32 ", expected at least 112",
               optional_header_size);
@@ -508,7 +511,7 @@ directory_in_section(EFI_IMAGE_DATA_DIRECTORY const directory,
    return true;
 }
 
-bool signature_section_check(const uint8_t *const signature, size_t const len)
+bool signature_section_check(const uint8_t *const signature, size_t const len, bool const verbose)
 {
    if (!ADDRESS_IS_ALIGNED(signature, 8) || len > (size_t)(INT32_MAX & ~7))
       return false;
@@ -547,8 +550,9 @@ bool signature_section_check(const uint8_t *const signature, size_t const len)
          LOG("Signature too small (got %" PRIu32 ", minimum %zu)", sig.dwLength, sizeof(sig));
          return false;
       }
-      LOG("Signature at offset 0x%zx with length 0x%" PRIx32,
-          (size_t)(current_pointer - signature), sig.dwLength);
+      if (verbose)
+         LOG("Signature at offset 0x%zx with length 0x%" PRIx32,
+             (size_t)(current_pointer - signature), sig.dwLength);
       // remaining_bytes is always a multiple of 8, so this is still in bounds.
       uint32_t new_length = (sig.dwLength + UINT32_C(7)) & ~UINT32_C(7);
       if (memcmp(&zero, current_pointer + sig.dwLength, new_length - sig.dwLength) != 0) {
@@ -560,7 +564,7 @@ bool signature_section_check(const uint8_t *const signature, size_t const len)
    return true;
 }
 
-bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image)
+bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image, bool const verbose)
 {
    EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header = extract_pe_header(ptr, len);
    if (untrusted_pe_header == NULL) {
@@ -589,7 +593,8 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                               (uint32_t)len,
                               nt_header_end,
                               optional_header_size,
-                              &max_address)) {
+                              &max_address,
+                              verbose)) {
       return false;
    }
    image->sections = STRUCT_AT_COUNT(&remainder, optional_header_size, EFI_IMAGE_SECTION_HEADER, image->n_sections);
@@ -691,7 +696,8 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
              untrusted_virtual_address, image->sections[i].Misc.VirtualSize, max_address);
          return false;
       }
-      LOG("Section %" PRIu32 " (name %.8s) has flags 0x%" PRIx32, i, new_section_name, image->sections[i].Characteristics);
+      if (verbose)
+         LOG("Section %" PRIu32 " (name %.8s) has flags 0x%" PRIx32, i, new_section_name, image->sections[i].Characteristics);
       uint32_t untrusted_characteristics = image->sections[i].Characteristics;
       if ((untrusted_characteristics & pe_section_reserved_bits) != 0) {
          LOG("Section %" PRIu32 ": characteristics 0x%08" PRIx32 " has reserved bits",
@@ -774,7 +780,8 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       untrusted_signature_size = image->directory[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY].Size;
    }
    if (untrusted_signature_offset == 0) {
-      LOG("File is not signed");
+      if (verbose)
+         LOG("File is not signed");
    } else {
       /* sanitize signature offset and size start */
       if (untrusted_signature_offset < last_section_start) {
@@ -810,7 +817,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       uint32_t signature_len = untrusted_signature_size;
       /* sanitize signature offset and size end */
 
-      if (!signature_section_check(ptr + signature_offset, signature_len))
+      if (!signature_section_check(ptr + signature_offset, signature_len, verbose))
           return false;
    }
    return true;
