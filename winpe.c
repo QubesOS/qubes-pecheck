@@ -1,5 +1,4 @@
 #include <stdalign.h>
-#include <stddef.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -35,11 +34,6 @@ static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, FileHeader) == 4,
 #define MIN_FILE_ALIGNMENT (UINT32_C(32))
 #define MIN_OPTIONAL_HEADER_SIZE (offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory))
 #define MAX_OPTIONAL_HEADER_SIZE (sizeof(EFI_IMAGE_OPTIONAL_HEADER64))
-
-struct PeBuffer {
-    const uint8_t *ptr;
-    size_t size;
-};
 
 /**
  * Obtain a pointer to size bytes with alignment align at offset offset.
@@ -106,31 +100,30 @@ static_assert(sizeof(struct dos_header) == 64, "header def bug");
  * \return The pointer on success, or NULL on failure.
  */
 const EFI_IMAGE_OPTIONAL_HEADER_UNION*
-extract_pe_header(const uint8_t *const ptr, size_t const len)
+extract_pe_header(const struct PeBuffer b)
 {
-   struct PeBuffer b = { .ptr = ptr, .size = len };
    uint32_t nt_header_offset = 0;
 #define NT_HEADER_OFFSET_LOC ((uint32_t)(offsetof(EFI_IMAGE_DOS_HEADER, e_lfanew)))
    EFI_IMAGE_OPTIONAL_HEADER_UNION const* pe_header;
    static_assert(sizeof(*pe_header) >= sizeof(EFI_IMAGE_DOS_HEADER),
                  "NT header shorter than DOS header?");
 
-   if (len < sizeof(*pe_header)) {
-      LOG("Too short (min length %zu, got %zu)", sizeof(*pe_header), len);
+   if (b.size < sizeof(*pe_header)) {
+      LOG("Too short (min length %zu, got %zu)", sizeof(*pe_header), b.size);
       return NULL;
    }
 
-   if (len > 0x7FFFFFFFUL) {
-      LOG("Too long (max length 0x7FFFFFFF, got 0x%zx)", len);
+   if (b.size > 0x7FFFFFFFUL) {
+      LOG("Too long (max length 0x7FFFFFFF, got 0x%zx)", b.size);
       return NULL;
    }
 
-   if (!ADDRESS_IS_ALIGNED((const void *)ptr, 8)) {
-      LOG("Pointer %p isn't 8-byte aligned", (const void*)ptr);
+   if (!ADDRESS_IS_ALIGNED((const void *)b.ptr, 8)) {
+      LOG("Pointer %p isn't 8-byte aligned", (const void*)b.ptr);
       return NULL;
    }
 
-   if (ptr[0] == 'M' && ptr[1] == 'Z') {
+   if (b.ptr[0] == 'M' && b.ptr[1] == 'Z') {
       const struct dos_header *dos_hdr = STRUCT_AT(&b, 0, struct dos_header);
       if (dos_hdr == NULL) {
          return NULL;
@@ -187,90 +180,6 @@ validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
          return false;
       }
    }
-   return true;
-}
-
-static bool parse_file_header(const EFI_IMAGE_FILE_HEADER *untrusted_file_header,
-                              uint32_t nt_len,
-                              uint32_t *nt_header_size,
-                              uint32_t *number_of_sections,
-                              uint32_t *optional_header_size)
-{
-   if (!(untrusted_file_header->Characteristics & EFI_IMAGE_FILE_EXECUTABLE_IMAGE)) {
-      LOG("File is not executable");
-      return false;
-   }
-   if (untrusted_file_header->Characteristics & EFI_IMAGE_FILE_RELOCS_STRIPPED) {
-      LOG("Relocations stripped from image");
-      return false;
-   }
-   if (untrusted_file_header->Characteristics & EFI_IMAGE_FILE_DLL) {
-      LOG("DLL cannot be executable");
-      return false;
-   }
-   if (untrusted_file_header->PointerToSymbolTable ||
-       untrusted_file_header->NumberOfSymbols) {
-      LOG("COFF symbol tables detected: symbol table offset 0x%" PRIx32
-          ", number of symbols 0x%" PRIx32,
-          untrusted_file_header->PointerToSymbolTable,
-          untrusted_file_header->NumberOfSymbols);
-      return false;
-   }
-
-   /* sanitize SizeOfOptionalHeader start */
-   uint32_t const SizeOfOptionalHeader = untrusted_file_header->SizeOfOptionalHeader;
-   if (SizeOfOptionalHeader < MIN_OPTIONAL_HEADER_SIZE) {
-      LOG("Optional header too short: got %" PRIu32 " but minimum is %zu",
-          SizeOfOptionalHeader, MIN_OPTIONAL_HEADER_SIZE);
-      return false;
-   }
-   if (SizeOfOptionalHeader > MAX_OPTIONAL_HEADER_SIZE) {
-      LOG("Optional header too long: got %" PRIu32 " but maximum is %zu",
-          SizeOfOptionalHeader, MAX_OPTIONAL_HEADER_SIZE);
-      return false;
-   }
-
-   // This is technically redundant, as parse_optional_header() will
-   // always fail if the optional header size is not a multiple of 8.
-   // Nevertheless, it is included for defense in depth.
-   if (!IS_ALIGNED(SizeOfOptionalHeader, 8)) {
-      LOG("Optional header size 0x%" PRIx16 " not multiple of 8",
-          SizeOfOptionalHeader);
-      return false;
-   }
-
-   /* sanitize NumberOfSections start */
-   uint32_t const NumberOfSections = untrusted_file_header->NumberOfSections;
-   if (NumberOfSections < 1) {
-      LOG("No sections!");
-      return false;
-   }
-
-   if (NumberOfSections > 96) {
-      LOG("Too many sections: got %" PRIu16 ", limit 96", NumberOfSections);
-      return false;
-   }
-
-   /*
-    * Overflow is impossible because NumberOfSections is limited to 96 and
-    * optional_header_size is limited to sizeof(IMAGE_OPTIONAL_HEADER64).
-    * Therefore, the maximum is 40 * 96 + 112 + 16 * 8 = 4080 bytes.
-    */
-   uint32_t const untrusted_nt_headers_size =
-      (NumberOfSections * (uint32_t)sizeof(EFI_IMAGE_SECTION_HEADER)) +
-      (OPTIONAL_HEADER_OFFSET + SizeOfOptionalHeader);
-   /* sanitize NT headers size start */
-   if (nt_len <= untrusted_nt_headers_size) {
-      LOG("Section headers do not fit in image");
-      return false;
-   }
-   *nt_header_size = untrusted_nt_headers_size;
-   *number_of_sections = NumberOfSections;
-   *optional_header_size = SizeOfOptionalHeader;
-   /* sanitize NT headers size end */
-   /* sanitize SizeOfOptionalHeader end */
-   /* sanitize NumberOfSections end */
-
    return true;
 }
 
@@ -348,113 +257,6 @@ validate_data_directories(const EFI_IMAGE_DATA_DIRECTORY *const directory,
    }
 
    return true;
-}
-
-static bool parse_optional_header(EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header,
-                                  struct ParsedImage *const image,
-                                  uint32_t len,
-                                  uint32_t nt_header_end,
-                                  uint32_t optional_header_size,
-                                  uint64_t *max_address,
-                                  bool verbose) {
-   uint64_t untrusted_image_base;
-   uint32_t untrusted_file_alignment;
-   uint32_t untrusted_section_alignment;
-   uint32_t untrusted_size_of_headers;
-   uint32_t untrusted_number_of_directory_entries;
-   uint32_t min_size_of_optional_header;
-
-   switch (untrusted_pe_header->Pe32.OptionalHeader.Magic) {
-   case EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC:
-      if (verbose)
-         LOG("This is a PE32 file: magic 0x10b");
-      // Optional header length checked to be large enough by parse_file_header()
-      static_assert(offsetof(EFI_IMAGE_NT_HEADERS32, OptionalHeader) == 24, "wrong offset");
-      static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory) == 96, "wrong size");
-      min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory);
-      untrusted_image_base = untrusted_pe_header->Pe32.OptionalHeader.ImageBase;
-      untrusted_file_alignment = untrusted_pe_header->Pe32.OptionalHeader.FileAlignment;
-      untrusted_section_alignment = untrusted_pe_header->Pe32.OptionalHeader.SectionAlignment;
-      untrusted_size_of_headers = untrusted_pe_header->Pe32.OptionalHeader.SizeOfHeaders;
-      untrusted_number_of_directory_entries = untrusted_pe_header->Pe32.OptionalHeader.NumberOfRvaAndSizes;
-      image->directory = untrusted_pe_header->Pe32.OptionalHeader.DataDirectory;
-      *max_address = UINT32_MAX;
-      break;
-   case EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-      if (verbose)
-         LOG("This is a PE32+ file: magic 0x20b");
-      if (optional_header_size < offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory)) {
-          LOG("Optional header too short for PE32+ file: got %" PRIu32 ", expected at least 112",
-              optional_header_size);
-          return false;
-      }
-      static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader) == 24, "wrong offset");
-      static_assert(offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory) == 112, "wrong size");
-      min_size_of_optional_header = offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory);
-      untrusted_image_base = untrusted_pe_header->Pe32Plus.OptionalHeader.ImageBase;
-      untrusted_file_alignment = untrusted_pe_header->Pe32Plus.OptionalHeader.FileAlignment;
-      untrusted_section_alignment = untrusted_pe_header->Pe32Plus.OptionalHeader.SectionAlignment;
-      untrusted_size_of_headers = untrusted_pe_header->Pe32Plus.OptionalHeader.SizeOfHeaders;
-      untrusted_number_of_directory_entries = untrusted_pe_header->Pe32Plus.OptionalHeader.NumberOfRvaAndSizes;
-      image->directory = untrusted_pe_header->Pe32Plus.OptionalHeader.DataDirectory;
-      *max_address = UINT64_MAX;
-      break;
-   case 0xb20:
-   case 0xb10:
-      LOG("Optional header indicates endian-swapped file (not implemented) %" PRIu16,
-          untrusted_pe_header->Pe32.OptionalHeader.Magic);
-      return false;
-   default:
-      LOG("Bad optional header magic %" PRIu16, untrusted_pe_header->Pe32.OptionalHeader.Magic);
-      return false;
-   }
-
-   /* sanitize directory entry number start */
-   if (untrusted_number_of_directory_entries > EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES) {
-      LOG("Too many NumberOfRvaAndSizes (got %" PRIu32 ", limit %d",
-          untrusted_number_of_directory_entries, EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES);
-      return false;
-   }
-
-   uint32_t const expected_optional_header_size =
-      untrusted_number_of_directory_entries * sizeof(EFI_IMAGE_DATA_DIRECTORY) +
-      min_size_of_optional_header;
-   if (optional_header_size != expected_optional_header_size) {
-      LOG("Wrong optional header size: got %" PRIu32 " but computed %" PRIu32,
-          optional_header_size, expected_optional_header_size);
-      return false;
-   }
-   image->directory_entries = untrusted_number_of_directory_entries;
-   /* sanitize directory entry number end */
-
-   if (!validate_image_base_and_alignment(untrusted_image_base,
-                                          untrusted_file_alignment,
-                                          untrusted_section_alignment))
-      return false;
-   image->file_alignment = untrusted_file_alignment;
-   image->section_alignment = untrusted_section_alignment;
-   image->image_base = untrusted_image_base;
-
-   /* sanitize SizeOfHeaders start */
-   if (untrusted_size_of_headers >= len) {
-      LOG("SizeOfHeaders extends past end of image (0x%" PRIx32 " > 0x%" PRIx32 ")",
-          untrusted_size_of_headers, len);
-      return false;
-   }
-   if (!IS_ALIGNED(untrusted_size_of_headers, image->file_alignment)) {
-      LOG("Misaligned size of headers: got 0x%" PRIx32 " but alignment is 0x%" PRIx32,
-          untrusted_size_of_headers, image->file_alignment);
-      return false;
-   }
-   if (untrusted_size_of_headers < nt_header_end) {
-      LOG("Bad size of headers: got 0x%" PRIx32 " but first byte after section headers is 0x%" PRIx32,
-          untrusted_size_of_headers, nt_header_end);
-      return false;
-   }
-   image->size_of_headers = untrusted_size_of_headers;
-   /* sanitize SizeOfHeaders end */
-
-   return validate_data_directories(image->directory, image->directory_entries);
 }
 
 /**
@@ -560,54 +362,142 @@ bool signature_section_check(const uint8_t *const signature, size_t const len, b
    return true;
 }
 
-bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image, bool const verbose)
+static bool
+parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image)
 {
-   EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header = extract_pe_header(ptr, len);
+
+   uint32_t untrusted_size_of_headers;
+   uint32_t untrusted_data_directory_count;
+   size_t data_directory_offset;
+   uint64_t untrusted_image_base;
+   uint32_t untrusted_file_alignment;
+   uint32_t untrusted_section_alignment;
+
+   EFI_IMAGE_OPTIONAL_HEADER_UNION const *const untrusted_pe_header = extract_pe_header(full);
    if (untrusted_pe_header == NULL) {
       return false;
    }
-   uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - ptr);
-   const struct PeBuffer remainder = {
-       .ptr = (const uint8_t*)untrusted_pe_header + OPTIONAL_HEADER_OFFSET,
-       .size = (uint32_t)len - (nt_header_offset + OPTIONAL_HEADER_OFFSET),
-   };
+   uint32_t const nt_header_offset = (uint32_t)((uint8_t const *)untrusted_pe_header - full.ptr);
+   const EFI_IMAGE_FILE_HEADER *const untrusted_file_header = &untrusted_pe_header->Pe32.FileHeader;
 
-   uint32_t nt_header_size, optional_header_size;
-   if (!parse_file_header(&untrusted_pe_header->Pe32.FileHeader,
-                          remainder.size,
-                          &nt_header_size,
-                          &image->n_sections,
-                          &optional_header_size)) {
+   switch (untrusted_pe_header->Pe32.OptionalHeader.Magic) {
+   case EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC:
+      if (verbose)
+         LOG("This is a PE32+ file: magic 0x20b");
+      data_directory_offset = offsetof(EFI_IMAGE_OPTIONAL_HEADER64, DataDirectory);
+      image->directory = untrusted_pe_header->Pe32Plus.OptionalHeader.DataDirectory;
+      untrusted_data_directory_count =
+         untrusted_pe_header->Pe32Plus.OptionalHeader.NumberOfRvaAndSizes;
+      untrusted_file_alignment = untrusted_pe_header->Pe32Plus.OptionalHeader.FileAlignment;
+      untrusted_image_base = untrusted_pe_header->Pe32Plus.OptionalHeader.ImageBase;
+      untrusted_section_alignment = untrusted_pe_header->Pe32Plus.OptionalHeader.SectionAlignment;
+      untrusted_size_of_headers = untrusted_pe_header->Pe32Plus.OptionalHeader.SizeOfHeaders;
+      image->max_address = UINT64_MAX;
+      break;
+   case EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC:
+      if (verbose)
+         LOG("This is a PE32 file: magic 0x10b");
+      data_directory_offset = offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory);
+      image->directory = untrusted_pe_header->Pe32.OptionalHeader.DataDirectory;
+      untrusted_data_directory_count = untrusted_pe_header->Pe32.OptionalHeader.NumberOfRvaAndSizes;
+      untrusted_file_alignment = untrusted_pe_header->Pe32.OptionalHeader.FileAlignment;
+      untrusted_image_base = untrusted_pe_header->Pe32.OptionalHeader.ImageBase;
+      untrusted_section_alignment = untrusted_pe_header->Pe32.OptionalHeader.SectionAlignment;
+      untrusted_size_of_headers = untrusted_pe_header->Pe32.OptionalHeader.SizeOfHeaders;
+      image->max_address = UINT32_MAX;
+      break;
+   default:
+      LOG("Image magic is %" PRIu16 ", which is not valid for 32-bit or 64-bit PE file",
+          untrusted_pe_header->Pe32.OptionalHeader.Magic);
+      return false;
+   }
+   if (untrusted_size_of_headers > full.size) {
+      LOG("Headers do not fit in image: headers %" PRIu32 ", image %zu", untrusted_size_of_headers,
+          full.size);
+      return false;
+   }
+   /* sanitize size of headers end */
+   image->size_of_headers = untrusted_size_of_headers;
+   struct PeBuffer headers = {.ptr = full.ptr, .size = untrusted_size_of_headers};
+
+   if (untrusted_data_directory_count > EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES) {
+      LOG("Image has %" PRIu32 " data directories, but limit is 16",
+          untrusted_data_directory_count);
+      return false;
+   }
+   image->directory_entries = untrusted_data_directory_count;
+   /* sanitize data directory count end */
+
+   /* sanitize size of optional header start */
+   size_t optional_header_size =
+      data_directory_offset + image->directory_entries * sizeof(EFI_IMAGE_DATA_DIRECTORY);
+   if (optional_header_size != untrusted_file_header->SizeOfOptionalHeader) {
+      LOG("Size of optional header is wrong: expected %zu, but got %" PRIu16, optional_header_size,
+          untrusted_file_header->SizeOfOptionalHeader);
+      return false;
+   }
+   /* sanitize size of optional header end */
+
+   /* sanitize number of sections start */
+   if (untrusted_file_header->NumberOfSections < 1) {
+      LOG("No sections!");
+      return false;
+   }
+   // Wraparound is impossible because nt_header_offset is checked to fit in 2GiB
+   // and header size is bounded by sizeof(EFI_IMAGE_OPTIONAL_HEADER_UNION)
+   uint32_t section_header_start =
+      nt_header_offset + optional_header_size + offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader);
+
+   image->sections = STRUCT_AT_COUNT(&headers, section_header_start, EFI_IMAGE_SECTION_HEADER,
+                                     untrusted_file_header->NumberOfSections);
+   if (image->sections == NULL) {
+      LOG("Section headers do not fit in headers");
+      return false;
+   }
+   /* santize number of sections end */
+   image->n_sections = untrusted_file_header->NumberOfSections;
+   if (!validate_image_base_and_alignment(untrusted_image_base, untrusted_file_alignment,
+                                          untrusted_section_alignment))
+      return false;
+   if (!IS_ALIGNED(headers.size, untrusted_file_alignment)) {
+      LOG("Misaligned size of headers: got 0x%zu but alignment is 0x%" PRIx32, headers.size,
+          image->file_alignment);
       return false;
    }
 
-   /* Overflow is impossible because nt_header_size is less than len - nt_header_offset. */
-   uint32_t const nt_header_end = nt_header_size + nt_header_offset;
-   uint64_t max_address;
-   if (!parse_optional_header(untrusted_pe_header,
-                              image,
-                              (uint32_t)len,
-                              nt_header_end,
-                              optional_header_size,
-                              &max_address,
-                              verbose)) {
+   if (!(untrusted_pe_header->Pe32.FileHeader.Characteristics & EFI_IMAGE_FILE_EXECUTABLE_IMAGE)) {
+      LOG("File is not executable");
       return false;
    }
-   image->sections = STRUCT_AT_COUNT(&remainder, optional_header_size, EFI_IMAGE_SECTION_HEADER, image->n_sections);
-   assert(image->sections);
-   for (uint32_t i = nt_header_end; i < image->size_of_headers; ++i) {
-      if (ptr[i]) {
-         LOG("Non-zero byte at offset 0x%" PRIx32 " that should be zero", i);
-         return false;
-      }
+   if (untrusted_pe_header->Pe32.FileHeader.Characteristics & EFI_IMAGE_FILE_RELOCS_STRIPPED) {
+      LOG("Relocations stripped from image");
+      return false;
    }
+   if (untrusted_pe_header->Pe32.FileHeader.Characteristics & EFI_IMAGE_FILE_DLL) {
+      LOG("DLL cannot be executable");
+   }
+   image->file_alignment = untrusted_file_alignment;
+   image->section_alignment = untrusted_section_alignment;
+   image->image_base = untrusted_image_base;
+   image->characteristics = untrusted_pe_header->Pe32.FileHeader.Characteristics;
+   return true;
+}
+
+bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image, bool const verbose)
+{
+   const struct PeBuffer full = {.ptr = ptr, .size = len};
+   if (!parse_headers(full, verbose, image))
+      return false;
+
+   if (!validate_data_directories(image->directory, image->directory_entries))
+      return false;
 
    /* Overflow is impossible: max_address is always at least as large as image->image_base */
-   uint64_t image_address_space = max_address - image->image_base;
+   uint64_t image_address_space = image->max_address - image->image_base;
    if (image_address_space > UINT32_MAX)
       image_address_space = UINT32_MAX;
    image_address_space &= ~(uint64_t)(image->section_alignment - 1);
-   max_address = image->image_base + image_address_space;
+   uint64_t const max_address = image->image_base + image_address_space;
    uint32_t last_section_start = image->size_of_headers;
    uint64_t last_virtual_address = 0;
    uint64_t last_virtual_address_end = 0;

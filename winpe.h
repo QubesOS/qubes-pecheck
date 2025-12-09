@@ -21,6 +21,7 @@ typedef char16_t CHAR16;
 #include "PeImage.h"
 
 struct ParsedImage {
+   uint64_t max_address;
    uint64_t image_base;
    uint32_t file_alignment;
    uint32_t section_alignment;
@@ -29,7 +30,7 @@ struct ParsedImage {
    uint32_t directory_entries;
    uint32_t n_sections;
    uint32_t size_of_headers;
-   uint32_t _pad0;
+   uint32_t characteristics;
 };
 
 enum {

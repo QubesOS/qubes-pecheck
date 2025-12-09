@@ -3,26 +3,32 @@
 #include "winpe.h"
 #include "winpe-private.h"
 
+static const EFI_IMAGE_OPTIONAL_HEADER_UNION*
+extract_pe_header_raw(const void *ptr, size_t size) {
+   return extract_pe_header((struct PeBuffer) {.ptr = ptr, .size = size});
+}
+
+
 // Test DOS header parsing
 static void test_dos_header(void) {
    uint8_t alignas(8) header[sizeof(EFI_IMAGE_OPTIONAL_HEADER_UNION) + 128] = {
       'P', 'E', '\0', '\0',
    };
    // valid
-   assert((void *)extract_pe_header(header, sizeof header - 128) == (void *)header);
+   assert((void *)extract_pe_header_raw(header, sizeof header - 128) == (void *)header);
    // misaligned
-   assert(extract_pe_header(header + 1, sizeof header - 128) == NULL);
+   assert(extract_pe_header_raw(header + 1, sizeof header - 128) == NULL);
    // too short
-   assert(extract_pe_header(header, sizeof header - 129) == NULL);
+   assert(extract_pe_header_raw(header, sizeof header - 129) == NULL);
    // too long
-   assert(extract_pe_header(header, 0x7FFFFFFFUL + 1) == NULL);
+   assert(extract_pe_header_raw(header, 0x7FFFFFFFUL + 1) == NULL);
    // Corrupt the NT header magic
    uint32_t nt_offset = 128;
    memcpy(header + offsetof(EFI_IMAGE_DOS_HEADER, e_lfanew), &nt_offset, 4);
    memcpy(header + nt_offset, "PE\0", 4);
    header[0] = 'M';
-   assert((void *)extract_pe_header(header, sizeof header - 128) == NULL);
-   assert((void *)extract_pe_header(header, sizeof header) == NULL);
+   assert((void *)extract_pe_header_raw(header, sizeof header - 128) == NULL);
+   assert((void *)extract_pe_header_raw(header, sizeof header) == NULL);
    // Add a DOS header
    header[1] = 'Z';
    // Check that the DOS header is skipped
@@ -31,17 +37,17 @@ static void test_dos_header(void) {
       memcpy(header + 60, &nt_offset, 4);
       // Check that the DOS header is skipped
       if (nt_offset % 8 == 0 && nt_offset >= 64 && nt_offset < 136) {
-         assert((void *)extract_pe_header(header, sizeof header) == header + nt_offset);
+         assert((void *)extract_pe_header_raw(header, sizeof header) == header + nt_offset);
          header[nt_offset] = 0;
-         assert((void *)extract_pe_header(header, sizeof header) == NULL);
+         assert((void *)extract_pe_header_raw(header, sizeof header) == NULL);
       } else {
-         assert((void *)extract_pe_header(header, sizeof header) == NULL);
+         assert((void *)extract_pe_header_raw(header, sizeof header) == NULL);
       }
    }
    // Check for integer overflow problems
    for (nt_offset = UINT32_MAX - sizeof header;; nt_offset += 1) {
       memcpy(header + 60, &nt_offset, 4);
-      assert((void *)extract_pe_header(header, sizeof header) == NULL);
+      assert((void *)extract_pe_header_raw(header, sizeof header) == NULL);
       if (nt_offset == UINT32_MAX)
          break;
    }
