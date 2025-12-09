@@ -31,6 +31,9 @@ struct ParsedImage {
    uint32_t n_sections;
    uint32_t size_of_headers;
    uint32_t characteristics;
+   const char *string_table;
+   size_t string_table_size;
+   uint32_t symbol_table_offset, string_table_end;
 };
 
 enum {

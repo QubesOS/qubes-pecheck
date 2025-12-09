@@ -9,6 +9,8 @@
 #include <sys/stat.h>
 #include <err.h>
 #include <unistd.h>
+#include <errno.h>
+#include <limits.h>
 
 #include "winpe.h"
 #include "winpe-private.h"
@@ -152,13 +154,63 @@ extract_pe_header(const struct PeBuffer b)
    return pe_header;
 }
 
-static bool
-validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
+static const char *
+string_table_lookup(const struct ParsedImage *image, uint64_t offset)
 {
+   if (offset >= image->string_table_size)
+      return NULL;
+   assert(image->string_table);
+   if (offset < 4)
+      return "";
+   return image->string_table + offset;
+}
+
+static const char *
+get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedImage *image, int *len)
+{
+   static_assert(INT_MAX == 0x7FFFFFFFUL, "whoops");
    /* Validate section name */
    const uint8_t *name = section->Name;
    uint32_t j;
-   for (j = 0; j < sizeof(section->Name); ++j) {
+   size_t symbol_len = sizeof(section->Name);
+   *len = 0;
+   bool in_string_table = name[0] == '/';
+   if (in_string_table) {
+      // Copy to ensure NUL termination
+      char tmpbuf[sizeof(section->Name)] = {0};
+      memcpy(tmpbuf, name + 1, sizeof(tmpbuf) - 1);
+      if (tmpbuf[0] < '0' || tmpbuf[0] > '9') {
+         LOG("Invalid string table offset");
+         return false;
+      }
+      char *end;
+      errno = 0;
+      unsigned long r = strtoul(tmpbuf, &end, 10);
+      if (errno != 0) {
+         LOG("Error getting string table offset");
+         return false;
+      }
+      for (const char *p = end; p < tmpbuf + sizeof(tmpbuf) - 1; p++) {
+         if (*p) {
+            LOG("String table index has non-NULL byte after string table "
+                "index");
+            return false;
+         }
+      }
+      name = (const uint8_t *)string_table_lookup(image, r);
+      if (name == NULL) {
+         LOG("String table index %lu is out of bounds for string table", r);
+         return false;
+      }
+      symbol_len = strlen((const char *)name);
+      if (symbol_len <= sizeof(section->Name)) {
+         LOG("Toolchain used string table for symbol of length %zu bytes, but "
+             "symbols of length 8 or less don't need it",
+             symbol_len);
+         return false;
+      }
+   }
+   for (j = 0; j < symbol_len; ++j) {
       if (name[j] == '\0')
          break;
       if (name[j] == '$') {
@@ -180,7 +232,9 @@ validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
          return false;
       }
    }
-   return true;
+   *len = (int)j;
+   assert(*len > 0 && (size_t)*len == j);
+   return (const char *)name;
 }
 
 #define MAX_IN_MEMORY_ALIGNMENT (1UL << 16)
@@ -443,8 +497,8 @@ parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image)
       LOG("No sections!");
       return false;
    }
-   // Wraparound is impossible because nt_header_offset is checked to fit in 2GiB
-   // and header size is bounded by sizeof(EFI_IMAGE_OPTIONAL_HEADER_UNION)
+   // Wraparound is impossible because nt_header_offset is checked to fit in
+   // 2GiB and header size is bounded by sizeof(EFI_IMAGE_OPTIONAL_HEADER_UNION)
    uint32_t section_header_start =
       nt_header_offset + optional_header_size + offsetof(EFI_IMAGE_NT_HEADERS64, OptionalHeader);
 
@@ -480,11 +534,67 @@ parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image)
    image->section_alignment = untrusted_section_alignment;
    image->image_base = untrusted_image_base;
    image->characteristics = untrusted_pe_header->Pe32.FileHeader.Characteristics;
+
+   uint32_t untrusted_pointer_to_symbol_table =
+      untrusted_pe_header->Pe32.FileHeader.PointerToSymbolTable;
+   uint32_t untrusted_number_of_symbols = untrusted_pe_header->Pe32.FileHeader.NumberOfSymbols;
+   uint32_t string_table_size;
+
+   if (untrusted_pointer_to_symbol_table == 0) {
+      if (untrusted_number_of_symbols != 0) {
+         LOG("Symbol table nonempty but at offset 0");
+         return false;
+      }
+      image->string_table = NULL;
+      image->string_table_size = 0;
+   } else {
+      if (untrusted_pointer_to_symbol_table < image->size_of_headers) {
+         LOG("Symbol table is at offset 0x%" PRIx32 ", overlapping headers that end at 0x%" PRIx32,
+             untrusted_pointer_to_symbol_table, image->size_of_headers);
+         return false;
+      }
+      // cannot wrap because UINT32_MAX * UINT32_MAX + UINT32_MAX + UINT32_MAX
+      // == UINT64_MAX
+      uint64_t untrusted_strings_start =
+         (uint64_t)untrusted_number_of_symbols * (uint64_t)EFI_IMAGE_SIZEOF_SYMBOL +
+         (uint64_t)untrusted_pointer_to_symbol_table;
+      // cannot wrap because EFI_IMAGE_SIZEOF_SYMBOL is (much) less than
+      // UINT32_MAX
+      if (untrusted_strings_start + sizeof(string_table_size) > full.size) {
+         LOG("Symbol table out of bounds");
+         return false;
+      }
+      memcpy(&string_table_size, full.ptr + untrusted_strings_start, sizeof(string_table_size));
+      if (string_table_size < sizeof(string_table_size)) {
+         LOG("String table too short: min 4, got %" PRIu32, string_table_size);
+         return false;
+      }
+      // cannot wrap because EFI_IMAGE_SIZEOF_SYMBOL is (much) less than
+      // UINT32_MAX
+      uint64_t untrusted_strings_end = untrusted_strings_start + (uint64_t)string_table_size;
+      if (untrusted_strings_end > full.size) {
+         LOG("String table out of bounds: 0x%" PRIx64 " > 0x%zu",
+             untrusted_strings_end, full.size);
+         return false;
+      }
+      // little-endian, so if the string table is of length 4 (no strings) last
+      // byte will be 0.
+      if (full.ptr[untrusted_strings_end - 1] != 0) {
+         LOG("String table not NUL-terminated");
+         return false;
+      }
+      /* string & symbol table sanitize end */
+      image->symbol_table_offset = untrusted_pointer_to_symbol_table;
+      image->string_table_end = untrusted_strings_end;
+      image->string_table = (const char *)full.ptr + untrusted_strings_start;
+      image->string_table_size = string_table_size;
+   }
    return true;
 }
 
 bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image, bool const verbose)
 {
+   memset(image, 0, sizeof(*image));
    const struct PeBuffer full = {.ptr = ptr, .size = len};
    if (!parse_headers(full, verbose, image))
       return false;
@@ -501,7 +611,8 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
    uint32_t last_section_start = image->size_of_headers;
    uint64_t last_virtual_address = 0;
    uint64_t last_virtual_address_end = 0;
-   const uint8_t *section_name = NULL, *new_section_name = NULL;
+   const char *last_section_name = NULL;
+   int last_section_name_len = 0;
 
    bool directories_found[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES] = { 0 };
    for (uint32_t i = 0; i < image->directory_entries; ++i)
@@ -509,37 +620,42 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
    directories_found[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY] = true; // special case
 
    for (uint32_t i = 0; i < image->n_sections; ++i) {
+      int section_name_len;
+      const char *section_name = get_section_name(image->sections + i, image, &section_name_len);
+      if (section_name == NULL)
+         return false;
+#define LOG_SECTION(msg, ...)                                                                      \
+   LOG("Section %" PRIu32 " (name %.*s) " msg, i, section_name_len, section_name, ##__VA_ARGS__)
       if (image->sections[i].PointerToRelocations != 0 ||
           image->sections[i].NumberOfRelocations != 0) {
-         LOG("Section %" PRIu32 " contains COFF relocations", i);
+         LOG_SECTION("contains COFF relocations");
          return false;
       }
 
       if (image->sections[i].PointerToLinenumbers != 0 ||
           image->sections[i].NumberOfLinenumbers != 0) {
-         LOG("Section %" PRIu32 " contains COFF line numbers", i);
+         LOG_SECTION("contains COFF line numbers");
          return false;
       }
-
-      if (!validate_section_name(image->sections + i))
-         return false;
-      new_section_name = image->sections[i].Name;
 
       /* Validate PointerToRawData and SizeOfRawData */
       if (image->sections[i].PointerToRawData != 0) {
          if (len - last_section_start < image->sections[i].SizeOfRawData) {
-            LOG("Section %" PRIu32 " too long: length is %" PRIu32 " but only %" PRIu32
-                  " bytes remaining in file", i,
-                  image->sections[i].SizeOfRawData,
-                  (uint32_t)(len - last_section_start));
+            LOG_SECTION("is too long: length is 0x%" PRIx32 " but only 0x%" PRIx32
+                        " bytes remaining in file",
+                        image->sections[i].SizeOfRawData, (uint32_t)(len - last_section_start));
             return false;
          }
          if (!IS_ALIGNED(image->sections[i].PointerToRawData, image->file_alignment)) {
-            LOG("Misaligned raw data pointer");
+            LOG_SECTION("has misaligned raw data pointer: pointer is 0x%" PRIx32
+                        " but alignment is 0x%" PRIx32,
+                        image->sections[i].PointerToRawData, image->file_alignment);
             return false;
          }
          if (!IS_ALIGNED(image->sections[i].SizeOfRawData, image->file_alignment)) {
-            LOG("Misaligned raw data size");
+            LOG_SECTION("has misaligned raw data size: size is 0x%" PRIx32
+                        " but alignment is 0x%" PRIx32,
+                        image->sections[i].SizeOfRawData, image->file_alignment);
             return false;
          }
          /* If the next section starts after the previous one ends, the data in
@@ -548,66 +664,76 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
           * are multiple of the file alignment, so it is never necessary to
           * have alignment padding between sections. */
          if (image->sections[i].PointerToRawData != last_section_start) {
-            LOG("Section %" PRIu32 " starts at 0x%" PRIx32 ", but %s at 0x%" PRIx32,
-                i, image->sections[i].PointerToRawData,
-                i > 0 ? "previous section ends" : "NT headers end",
-                last_section_start);
+            if (i > 0) {
+               LOG_SECTION("starts at 0x%" PRIx32 ", but previous section %.*s ends at 0x%" PRIx32,
+                           image->sections[i].PointerToRawData, last_section_name_len,
+                           last_section_name, last_section_start);
+            } else {
+               LOG_SECTION("starts at 0x%" PRIx32 ", but NT headers end at 0x%" PRIx32,
+                           image->sections[i].PointerToRawData, last_section_start);
+            }
             return false;
          }
          /* It is okay for sections to have data beyond their virtual address size (which is ignored),
           * but not the other way around. */
          if (image->sections[i].SizeOfRawData < image->sections[i].Misc.VirtualSize) {
-            LOG("Section %" PRIu32 " (name %.8s) has size 0x%" PRIx32 " in the file, but "
-                "0x%" PRIx32 " in memory", i, new_section_name, image->sections[i].SizeOfRawData,
-                image->sections[i].Misc.VirtualSize);
+            LOG_SECTION("has size 0x%" PRIx32 " in the file, but "
+                        "0x%" PRIx32 " in memory",
+                        image->sections[i].SizeOfRawData, image->sections[i].Misc.VirtualSize);
             return false;
          }
          last_section_start += image->sections[i].SizeOfRawData;
+         if (verbose) {
+            LOG_SECTION("starts at 0x%" PRIx32 " and continues to 0x%" PRIx32,
+                        image->sections[i].PointerToRawData,
+                        last_section_start);
+         }
       } else {
          if (image->sections[i].SizeOfRawData != 0) {
-            LOG("Section %" PRIu32 " starts at zero but has nonzero size", i);
+            LOG_SECTION("starts at zero but has nonzero size");
             return false;
          }
+         if (verbose)
+            LOG_SECTION("has no data on disk");
       }
 
       /* Validate VirtualAddress and VirtualSize */
       if (image->sections[i].VirtualAddress > image_address_space) {
-         LOG("VMA too large: 0x%" PRIx32 " extends beyond address space [0x%" PRIx64 ", 0x%" PRIx64 "]",
-             image->sections[i].VirtualAddress, image->image_base, max_address);
+         LOG_SECTION("has too large VMA: 0x%" PRIx32 " extends beyond address space [0x%" PRIx64
+                     ", 0x%" PRIx64 "]",
+                     image->sections[i].VirtualAddress, image->image_base, max_address);
          return false;
       }
       uint64_t const untrusted_virtual_address = image->sections[i].VirtualAddress + image->image_base;
       if (max_address - untrusted_virtual_address < image->sections[i].Misc.VirtualSize) {
-         LOG("Virtual address overflow: 0x%" PRIx64 " + 0x%" PRIx32 " > 0x%" PRIx64,
-             untrusted_virtual_address, image->sections[i].Misc.VirtualSize, max_address);
+         LOG_SECTION("has virtual address overflow: 0x%" PRIx64 " + 0x%" PRIx32 " > 0x%" PRIx64,
+                     untrusted_virtual_address, image->sections[i].Misc.VirtualSize, max_address);
          return false;
       }
       if (verbose)
-         LOG("Section %" PRIu32 " (name %.8s) has flags 0x%" PRIx32, i, new_section_name, image->sections[i].Characteristics);
+         LOG_SECTION("has flags 0x%" PRIx32, image->sections[i].Characteristics);
       uint32_t untrusted_characteristics = image->sections[i].Characteristics;
       if ((untrusted_characteristics & pe_section_reserved_bits) != 0) {
-         LOG("Section %" PRIu32 ": characteristics 0x%08" PRIx32 " has reserved bits",
-             i, untrusted_characteristics);
+         LOG_SECTION("characteristics 0x%08" PRIx32 " has reserved bits",
+                     untrusted_characteristics);
          return false;
       }
       if ((untrusted_characteristics & EFI_IMAGE_SCN_CNT_INITIALIZED_DATA) &&
           (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
-         LOG("Section %" PRIu32 "(%.8s) is both initialized and uninitialized data",
-             i, image->sections[i].Name);
+         LOG_SECTION("is both initialized and uninitialized data");
          return false;
       }
       if ((untrusted_characteristics & EFI_IMAGE_SCN_CNT_CODE) &&
           (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
-         LOG("Section %" PRIu32 "(%.8s) is both code and uninitialized data",
-             i, image->sections[i].Name);
+         LOG_SECTION("is both code and uninitialized data");
          return false;
       }
       if (untrusted_characteristics & EFI_IMAGE_SCN_ALIGN_64BYTES) {
          uint32_t alignment = 1U << (((untrusted_characteristics & EFI_IMAGE_SCN_ALIGN_64BYTES) >> 20) - 1);
          if (!IS_ALIGNED(untrusted_virtual_address, alignment)) {
-            LOG("Section %" PRIu32 " (%.8s) has misaligned VMA for its own alignment: 0x%" PRIx64
-                " not aligned to 0x%" PRIx32,
-                i, image->sections[i].Name, untrusted_virtual_address, alignment);
+            LOG_SECTION("has misaligned VMA for its own alignment: 0x%" PRIx64
+                        " not aligned to 0x%" PRIx32,
+                        untrusted_virtual_address, alignment);
             return false;
          }
       }
@@ -615,29 +741,30 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
           (EFI_IMAGE_SCN_CNT_CODE|EFI_IMAGE_SCN_CNT_INITIALIZED_DATA|EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
          /* First section in memory must be aligned.  Subsequent ones do not need to be. */
          if (last_virtual_address == 0 && !IS_ALIGNED(untrusted_virtual_address, image->section_alignment)) {
-            LOG("Section %" PRIu32 " (%.8s) has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
-                i, image->sections[i].Name, untrusted_virtual_address, image->section_alignment);
+            LOG_SECTION("has misaligned VMA: 0x%" PRIx64 " not aligned to 0x%" PRIx32,
+                        untrusted_virtual_address, image->section_alignment);
             return false;
          }
          if (untrusted_virtual_address < last_virtual_address) {
-            assert(new_section_name != NULL);
-            assert(section_name != NULL);
-            LOG("Sections not sorted by VA: current section (%.8s) VA 0x%" PRIx64 " < previous section (%.8s) 0x%" PRIx64,
-                new_section_name, untrusted_virtual_address, section_name, last_virtual_address);
+            assert(last_section_name != NULL);
+            LOG_SECTION("is not sorted by VA: VA 0x%" PRIx64
+                        " < previous section %.*s VA 0x%" PRIx64,
+                        untrusted_virtual_address, last_section_name_len, last_section_name,
+                        last_virtual_address);
             return false;
          }
          if (untrusted_virtual_address < last_virtual_address_end) {
-            assert(new_section_name != NULL);
-            assert(section_name != NULL);
-            LOG("Sections %.8s (%" PRIu32 ") and %.8s (%" PRIu32 ") overlap in memory: 0x%" PRIx64
-                " in [0x%" PRIx64 ", 0x%" PRIx64 ")",
-                section_name, i - 1, new_section_name, i, untrusted_virtual_address,
-                last_virtual_address, last_virtual_address_end);
+            assert(last_section_name != NULL);
+            LOG_SECTION("overlaps the previous section %.*s: 0x%" PRIx64 " in [0x%" PRIx64
+                        ", 0x%" PRIx64 ")",
+                        last_section_name_len, last_section_name, untrusted_virtual_address,
+                        last_virtual_address, last_virtual_address_end);
             return false;
          }
          last_virtual_address = untrusted_virtual_address;
          last_virtual_address_end = last_virtual_address + image->sections[i].Misc.VirtualSize;
-         section_name = new_section_name;
+         last_section_name = section_name;
+         last_section_name_len = section_name_len;
 
          for (uint32_t j = 0; j < image->directory_entries; ++j) {
             /* Security directory is special. */
@@ -659,20 +786,42 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       }
    }
 
+   if (last_section_start == image->size_of_headers) {
+      LOG("Image has no sections with data");
+      return false;
+   }
+
+   if (image->symbol_table_offset != 0) {
+      if (verbose)
+         LOG("Symbol table starts at offset 0x%" PRIx32, image->symbol_table_offset);
+      if (image->symbol_table_offset < last_section_start) {
+         LOG("Last section ends at offset 0x%" PRIx32
+             ", but symbol table is at offset 0x%" PRIx32
+             " which overlaps headers or sections",
+             last_section_start, image->symbol_table_offset);
+         return false;
+      }
+   }
+
    uint32_t untrusted_signature_size = 0;
    uint32_t untrusted_signature_offset = 0;
    if (image->directory_entries > EFI_IMAGE_DIRECTORY_ENTRY_SECURITY) {
       untrusted_signature_offset = image->directory[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY].VirtualAddress;
       untrusted_signature_size = image->directory[EFI_IMAGE_DIRECTORY_ENTRY_SECURITY].Size;
    }
+   uint32_t string_and_symbol_table_size = image->string_table_end - image->symbol_table_offset;
    if (untrusted_signature_offset == 0) {
-      if (verbose)
+      if (verbose) {
          LOG("File is not signed");
+         if (string_and_symbol_table_size != len - last_section_start)
+            LOG("There are 0x%" PRIx32 " bytes in the string table + symbol table, but 0x%zx bytes after the sections",
+                string_and_symbol_table_size, len - last_section_start);
+      }
    } else {
       /* sanitize signature offset and size start */
       if (untrusted_signature_offset < last_section_start) {
          LOG("Signature overlaps sections (0x%" PRIx32 " < 0x%" PRIx32 ")",
-               untrusted_signature_offset, last_section_start);
+             untrusted_signature_offset, last_section_start);
          return false;
       }
 
@@ -684,7 +833,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
 
       if (untrusted_signature_offset > len) {
          LOG("Signature starts after end of file (got 0x%" PRIx32 "but only 0x%zu bytes in file)",
-               untrusted_signature_size, len);
+             untrusted_signature_size, len);
          return false;
       }
 
@@ -702,7 +851,14 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       }
       uint32_t signature_len = untrusted_signature_size;
       /* sanitize signature offset and size end */
-
+      if (image->string_table_end > signature_offset) {
+         LOG("String table ends at 0x%" PRIx32 ", but signature starts at 0x%" PRIx32,
+             image->string_table_end, signature_offset);
+         return false;
+      }
+      if (verbose && string_and_symbol_table_size != signature_offset - last_section_start)
+         LOG("There are 0x%" PRIx32 " bytes in the string table + symbol table, but 0x%" PRIx32 " bytes between the last section and the signature",
+             string_and_symbol_table_size, signature_offset - last_section_start);
       if (!signature_section_check(ptr + signature_offset, signature_len, verbose))
           return false;
    }
