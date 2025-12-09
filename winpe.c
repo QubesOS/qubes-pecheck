@@ -417,9 +417,8 @@ bool signature_section_check(const uint8_t *const signature, size_t const len, b
 }
 
 static bool
-parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image)
+parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image, bool strict)
 {
-
    uint32_t untrusted_size_of_headers;
    uint32_t untrusted_data_directory_count;
    size_t data_directory_offset;
@@ -525,7 +524,8 @@ parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image)
    }
    if (untrusted_pe_header->Pe32.FileHeader.Characteristics & EFI_IMAGE_FILE_RELOCS_STRIPPED) {
       LOG("Relocations stripped from image");
-      return false;
+      if (strict)
+         return false;
    }
    if (untrusted_pe_header->Pe32.FileHeader.Characteristics & EFI_IMAGE_FILE_DLL) {
       LOG("DLL cannot be executable");
@@ -592,11 +592,12 @@ parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image)
    return true;
 }
 
-bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image, bool const verbose)
+bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image,
+              bool const verbose, bool const strict, bool const require_relocs)
 {
    memset(image, 0, sizeof(*image));
    const struct PeBuffer full = {.ptr = ptr, .size = len};
-   if (!parse_headers(full, verbose, image))
+   if (!parse_headers(full, verbose, image, strict))
       return false;
 
    if (!validate_data_directories(image->directory, image->directory_entries))
@@ -621,6 +622,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
 
    for (uint32_t i = 0; i < image->n_sections; ++i) {
       int section_name_len;
+      // This is not NUL-terminated if section_name_len is 8.
       const char *section_name = get_section_name(image->sections + i, image, &section_name_len);
       if (section_name == NULL)
          return false;
@@ -629,13 +631,15 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       if (image->sections[i].PointerToRelocations != 0 ||
           image->sections[i].NumberOfRelocations != 0) {
          LOG_SECTION("contains COFF relocations");
-         return false;
+         if (strict)
+            return false;
       }
 
       if (image->sections[i].PointerToLinenumbers != 0 ||
           image->sections[i].NumberOfLinenumbers != 0) {
          LOG_SECTION("contains COFF line numbers");
-         return false;
+         if (strict)
+            return false;
       }
 
       /* Validate PointerToRawData and SizeOfRawData */
@@ -716,17 +720,54 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
       if ((untrusted_characteristics & pe_section_reserved_bits) != 0) {
          LOG_SECTION("characteristics 0x%08" PRIx32 " has reserved bits",
                      untrusted_characteristics);
-         return false;
+         if (strict)
+            return false;
       }
-      if ((untrusted_characteristics & EFI_IMAGE_SCN_CNT_INITIALIZED_DATA) &&
-          (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
-         LOG_SECTION("is both initialized and uninitialized data");
-         return false;
-      }
-      if ((untrusted_characteristics & EFI_IMAGE_SCN_CNT_CODE) &&
-          (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
-         LOG_SECTION("is both code and uninitialized data");
-         return false;
+      if (untrusted_characteristics & EFI_IMAGE_SCN_CNT_CODE) {
+         if (verbose)
+            LOG_SECTION("is executable code");
+         if (!(untrusted_characteristics & EFI_IMAGE_SCN_MEM_EXECUTE)) {
+            LOG_SECTION("is code but has no execute permissions");
+            if (strict)
+               return false;
+         }
+         if (untrusted_characteristics & EFI_IMAGE_SCN_MEM_WRITE) {
+            LOG_SECTION("is code but has write permissions");
+            if (strict)
+               return false;
+         }
+         if (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA) {
+            LOG_SECTION("is both code and uninitialized data");
+            return false;
+         }
+         if (untrusted_characteristics & EFI_IMAGE_SCN_CNT_INITIALIZED_DATA) {
+            LOG_SECTION("is both code and initialized data");
+            if (strict)
+               return false;
+         }
+      } else {
+         if (untrusted_characteristics & EFI_IMAGE_SCN_CNT_INITIALIZED_DATA) {
+            if (verbose)
+               LOG_SECTION("is initialized data");
+            if (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA) {
+               LOG_SECTION("is both initialized and uninitialized data");
+               if (strict)
+                  return false;
+            }
+         } else {
+            if (verbose) {
+               if (untrusted_characteristics & EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA) {
+                  LOG_SECTION("is uninitialized data");
+               } else {
+                  LOG_SECTION("is not code, initialized data, or uninitialized data");
+               }
+            }
+         }
+         if (untrusted_characteristics & EFI_IMAGE_SCN_MEM_EXECUTE) {
+            LOG_SECTION("is data but has execute permissions");
+            if (strict)
+               return false;
+         }
       }
       if (untrusted_characteristics & EFI_IMAGE_SCN_ALIGN_64BYTES) {
          uint32_t alignment = 1U << (((untrusted_characteristics & EFI_IMAGE_SCN_ALIGN_64BYTES) >> 20) - 1);
@@ -736,6 +777,25 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                         untrusted_virtual_address, alignment);
             return false;
          }
+      }
+      if (untrusted_characteristics & EFI_IMAGE_SCN_MEM_DISCARDABLE) {
+         if (section_name_len != (int)sizeof(".reloc") - 1 ||
+             memcmp(section_name, ".reloc", sizeof(".reloc")) != 0) {
+            LOG_SECTION("is discardable, which isn't expected");
+            if (strict)
+               return false;
+         } else {
+            if (require_relocs) {
+               LOG_SECTION("is discardable, causing crashes with some bootloaders");
+               return false;
+            }
+         }
+      }
+      if ((untrusted_characteristics & (EFI_IMAGE_SCN_MEM_EXECUTE|EFI_IMAGE_SCN_MEM_WRITE)) ==
+          (EFI_IMAGE_SCN_MEM_EXECUTE|EFI_IMAGE_SCN_MEM_WRITE)) {
+         LOG_SECTION("is both writeable and executable");
+         if (strict)
+            return false;
       }
       if (untrusted_characteristics &
           (EFI_IMAGE_SCN_CNT_CODE|EFI_IMAGE_SCN_CNT_INITIALIZED_DATA|EFI_IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
@@ -849,6 +909,7 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
          LOG("0x%zx bytes of junk after signature", len - (untrusted_signature_size + signature_offset));
          return false;
       }
+
       uint32_t signature_len = untrusted_signature_size;
       /* sanitize signature offset and size end */
       if (image->string_table_end > signature_offset) {

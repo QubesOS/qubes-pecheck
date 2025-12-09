@@ -17,10 +17,16 @@ int main(int argc, char **argv)
    struct option opts[] = {
        { "verbose", no_argument, NULL, 'v' },
        { "no-verbose", no_argument, NULL, 'V' },
+       { "strict", no_argument, NULL, 's' },
+       { "no-strict", no_argument, NULL, 'S' },
+       { "require-relocs", no_argument, NULL, 'r' },
+       { "no-require-relocs", no_argument, NULL, 'R' },
        { "help", no_argument, NULL, 'h' },
        { NULL, 0, NULL, 0 },
    };
    bool verbose = false;
+   bool strict = false;
+   bool require_relocs = false;
    for (;;) {
       int index;
       int v = getopt_long(argc, argv, "+", opts, &index);
@@ -28,14 +34,26 @@ int main(int argc, char **argv)
          case ':':
          case '?':
             return EXIT_FAILURE;
+         case 's':
+            strict = true;
+            break;
+         case 'S':
+            strict = false;
+            break;
          case 'v':
             verbose = true;
             break;
          case 'V':
             verbose = false;
             break;
+         case 'R':
+            require_relocs = false;
+            break;
+         case 'r':
+            require_relocs = true;
+            break;
          case 'h':
-            fputs("Usage: pechk [--verbose] [--no-verbose] [--] FILE [FILES...]\n", stdout);
+            fputs("Usage: pecheck [--strict] [--no-strict] [--verbose] [--no-verbose] [--] FILE [FILES...]\n", stdout);
             if (fflush(NULL) || ferror(stdout))
                errx(1, "I/O error on stdout");
             return 0;
@@ -71,7 +89,7 @@ end_of_options:
           data_read += (size_t)bytes_read;
       }
       struct ParsedImage image;
-      if (!pe_parse(fbuf, size, &image, verbose))
+      if (!pe_parse(fbuf, size, &image, verbose, strict, require_relocs))
          errx(1, "bad PE file");
       if (fflush(NULL) || ferror(stdout) || ferror(stderr))
          errx(1, "I/O error");

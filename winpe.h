@@ -39,8 +39,8 @@ struct ParsedImage {
 enum {
     pe_section_reserved_bits = 0xF6D1F,
 };
-
-bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image, bool verbose);
+bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *image,
+              bool const verbose, bool const strict, bool const require_relocs);
 
 #define LOG(a, ...) (fprintf(stderr, a "\n", ## __VA_ARGS__))
 
