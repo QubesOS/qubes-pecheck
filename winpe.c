@@ -165,11 +165,7 @@ validate_section_name(const EFI_IMAGE_SECTION_HEADER *section)
    /* Validate section name */
    const uint8_t *name = section->Name;
    uint32_t j;
-   if (name[0] != '.') {
-      LOG("Section name does not begin with '.'");
-      return false;
-   }
-   for (j = 1; j < sizeof(section->Name); ++j) {
+   for (j = 0; j < sizeof(section->Name); ++j) {
       if (name[j] == '\0')
          break;
       if (name[j] == '$') {
