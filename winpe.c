@@ -34,6 +34,7 @@ static_assert(offsetof(EFI_IMAGE_NT_HEADERS64, FileHeader) == 4,
               "wrong definition of IMAGE_NT_HEADERS64");
 
 #define MIN_FILE_ALIGNMENT (UINT32_C(32))
+#define MAX_FILE_ALIGNMENT (UINT32_C(1) << 16)
 #define MIN_OPTIONAL_HEADER_SIZE (offsetof(EFI_IMAGE_OPTIONAL_HEADER32, DataDirectory))
 #define MAX_OPTIONAL_HEADER_SIZE (sizeof(EFI_IMAGE_OPTIONAL_HEADER64))
 
@@ -251,6 +252,7 @@ validate_image_base_and_alignment(uint64_t const image_base,
           MIN_BASE_ALIGNMENT);
       return false;
    }
+   // Sections must be at least PAGE_SIZE aligned.
    if (section_alignment < MIN_SECTION_ALIGNMENT) {
       LOG("Section alignment too small (0x%" PRIx32 " < 0x%lx)", section_alignment,
           MIN_SECTION_ALIGNMENT);
@@ -264,8 +266,10 @@ validate_image_base_and_alignment(uint64_t const image_base,
       LOG("File alignment too small (0x%" PRIx32 " < 0x%x)", file_alignment, MIN_FILE_ALIGNMENT);
       return false;
    }
-   if (file_alignment > (1U << 16)) {
-      LOG("Too large file alignment (0x%" PRIx32 " > 0x%x)", file_alignment, 1U << 16);
+   // The PE specification limits file alignments to 1 << 16.
+   if (file_alignment > MAX_FILE_ALIGNMENT) {
+      LOG("Too large file alignment (0x%" PRIx32 " > 0x%x)",
+          file_alignment, MAX_FILE_ALIGNMENT);
       return false;
    }
    if (!IS_POW2(file_alignment)) {
@@ -509,6 +513,9 @@ parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image, boo
    }
    /* santize number of sections end */
    image->n_sections = untrusted_file_header->NumberOfSections;
+   // No bounds check on untrusted_image_base is needed,
+   // as PE32 images only use a 4-byte field for it.
+   // Therefore, values above max_address simply are not expressable.
    if (!validate_image_base_and_alignment(untrusted_image_base, untrusted_file_alignment,
                                           untrusted_section_alignment))
       return false;
@@ -523,12 +530,15 @@ parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image, boo
       return false;
    }
    if (untrusted_pe_header->Pe32.FileHeader.Characteristics & EFI_IMAGE_FILE_RELOCS_STRIPPED) {
-      LOG("Relocations stripped from image");
+      LOG("Relocations stripped from image.  The image can only be loaded at its base address");
       if (strict)
          return false;
    }
    if (untrusted_pe_header->Pe32.FileHeader.Characteristics & EFI_IMAGE_FILE_DLL) {
-      LOG("DLL cannot be executable");
+      LOG("DLLs are not executable directly");
+      // This is a valid PE image, so only reject it in strict mode.
+      if (strict)
+         return false;
    }
    image->file_alignment = untrusted_file_alignment;
    image->section_alignment = untrusted_section_alignment;
@@ -662,11 +672,13 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                         image->sections[i].SizeOfRawData, image->file_alignment);
             return false;
          }
-         /* If the next section starts after the previous one ends, the data in
+         /*
+          * If the next section starts after the previous one ends, the data in
           * between can be tampered with without invalidating the signature.
           * This is bad.  All sections must have size and alignment that
           * are multiple of the file alignment, so it is never necessary to
-          * have alignment padding between sections. */
+          * have alignment padding between sections.
+          */
          if (image->sections[i].PointerToRawData != last_section_start) {
             if (i > 0) {
                LOG_SECTION("starts at 0x%" PRIx32 ", but previous section %.*s ends at 0x%" PRIx32,
@@ -678,8 +690,14 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
             }
             return false;
          }
-         /* It is okay for sections to have data beyond their virtual address size (which is ignored),
-          * but not the other way around. */
+         /*
+          * It is okay for sections to have data beyond their virtual
+          * address size (which is ignored), but not the other way around.
+          * VirtualSize specifies the amount of bytes loaded into memory.
+          * All of this data must be read from the section.  If
+          * SizeOfRawData is less than VirtualSize, there is nowhere to
+          * read the last VirtualSize - SizeOfRawData bytes from.
+          */
          if (image->sections[i].SizeOfRawData < image->sections[i].Misc.VirtualSize) {
             LOG_SECTION("has size 0x%" PRIx32 " in the file, but "
                         "0x%" PRIx32 " in memory",
@@ -708,6 +726,9 @@ bool pe_parse(const uint8_t *const ptr, size_t const len, struct ParsedImage *im
                      image->sections[i].VirtualAddress, image->image_base, max_address);
          return false;
       }
+      // Wraparound is impossible: image->image_base is a uint64_t,
+      // image->sections[i].VirtualAddress is bounded by image_address_space,
+      // and image_address_space is bounded by image->max_address - image->image_base.
       uint64_t const untrusted_virtual_address = image->sections[i].VirtualAddress + image->image_base;
       if (max_address - untrusted_virtual_address < image->sections[i].Misc.VirtualSize) {
          LOG_SECTION("has virtual address overflow: 0x%" PRIx64 " + 0x%" PRIx32 " > 0x%" PRIx64,

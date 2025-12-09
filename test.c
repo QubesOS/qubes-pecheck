@@ -34,7 +34,7 @@ static void test_dos_header(void) {
    // Check that the DOS header is skipped
    for (nt_offset = 2; nt_offset < 136; nt_offset += 1) {
       memcpy(header + nt_offset, "PE\0", 4);
-      memcpy(header + 60, &nt_offset, 4);
+      memcpy(header + offsetof(EFI_IMAGE_DOS_HEADER, e_lfanew), &nt_offset, 4);
       // Check that the DOS header is skipped
       if (nt_offset % 8 == 0 && nt_offset >= 64 && nt_offset < 136) {
          assert((void *)extract_pe_header_raw(header, sizeof header) == header + nt_offset);
@@ -46,7 +46,7 @@ static void test_dos_header(void) {
    }
    // Check for integer overflow problems
    for (nt_offset = UINT32_MAX - sizeof header;; nt_offset += 1) {
-      memcpy(header + 60, &nt_offset, 4);
+      memcpy(header + offsetof(EFI_IMAGE_DOS_HEADER, e_lfanew), &nt_offset, 4);
       assert((void *)extract_pe_header_raw(header, sizeof header) == NULL);
       if (nt_offset == UINT32_MAX)
          break;
