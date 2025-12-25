@@ -207,6 +207,15 @@ get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedIma
              tmpbuf);
          return false;
       }
+      // This is technically possible, but it would take a completely silly
+      // compiler or linker to produce this, and it could easily confuse tools.
+      // Example: a tool copies the string table without its length, and
+      // subtracts 4 from the offset to get the offset into the string table.
+      // This then wraps around or underflows, resulting in out-of-bounds access.
+      if (r < 4L) {
+         LOG("String table index %lu points into string table length", r);
+         return false;
+      }
       name = (const uint8_t *)string_table_lookup(image, r);
       if (name == NULL) {
          LOG("String table index %lu is out of bounds for string table", r);
