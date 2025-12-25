@@ -613,8 +613,9 @@ parse_headers(struct PeBuffer full, bool verbose, struct ParsedImage *image, boo
              untrusted_strings_end, full.size);
          return false;
       }
-      // little-endian, so if the string table is of length 4 (no strings) last
-      // byte will be 0.
+      // Little-endian, so if the string table is of length 4 (no strings) last
+      // byte will be 0.  The addition of string_table_size (which is checked to
+      // be at least sizeof(string_table_size)) means this cannot underflow.
       if (full.ptr[untrusted_strings_end - 1] != 0) {
          LOG("String table not NUL-terminated");
          return false;
