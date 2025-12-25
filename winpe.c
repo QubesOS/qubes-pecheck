@@ -173,7 +173,7 @@ get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedIma
    /* Validate section name */
    const uint8_t *name = section->Name;
    uint32_t j;
-   size_t symbol_len = sizeof(section->Name);
+   size_t section_name_len = sizeof(section->Name);
    *len = 0;
    bool in_string_table = name[0] == '/';
    if (in_string_table) {
@@ -203,15 +203,15 @@ get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedIma
          LOG("String table index %lu is out of bounds for string table", r);
          return false;
       }
-      symbol_len = strlen((const char *)name);
-      if (symbol_len <= sizeof(section->Name)) {
-         LOG("Toolchain used string table for symbol of length %zu bytes, but "
-             "symbols of length 8 or less don't need it",
-             symbol_len);
+      section_name_len = strlen((const char *)name);
+      if (section_name_len <= sizeof(section->Name)) {
+         LOG("Toolchain used string table for section name of length %zu "
+             "bytes, but section names of length 8 or less don't need it",
+             section_name_len);
          return false;
       }
    }
-   for (j = 0; j < symbol_len; ++j) {
+   for (j = 0; j < section_name_len; ++j) {
       if (name[j] == '\0')
          break;
       if (name[j] == '$') {
