@@ -184,6 +184,10 @@ get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedIma
          LOG("Invalid string table offset");
          return false;
       }
+      if (tmpbuf[0] == '0' && tmpbuf[1] != '\0') {
+         LOG("Spurious leading zero in string table offset");
+         return false;
+      }
       char *end;
       errno = 0;
       unsigned long r = strtoul(tmpbuf, &end, 10);
