@@ -202,6 +202,11 @@ get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedIma
             return false;
          }
       }
+      if (image->string_table == NULL) {
+         LOG("Section name /%s is an index into the string table, but there is no string table",
+             tmpbuf);
+         return false;
+      }
       name = (const uint8_t *)string_table_lookup(image, r);
       if (name == NULL) {
          LOG("String table index %lu is out of bounds for string table", r);
