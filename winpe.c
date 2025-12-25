@@ -251,10 +251,12 @@ get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedIma
          return false;
       }
    }
-   for (uint8_t k = j; k < sizeof(section->Name); ++k) {
-      if (name[k] != '\0') {
-         LOG("Section name has non-NUL byte after NUL byte");
-         return false;
+   if (!in_string_table) {
+      for (uint8_t k = j; k < sizeof(section->Name); ++k) {
+         if (name[k] != '\0') {
+            LOG("Section name has non-NUL byte after NUL byte");
+            return false;
+         }
       }
    }
    *len = (int)j;
