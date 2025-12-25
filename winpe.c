@@ -228,6 +228,12 @@ get_section_name(const EFI_IMAGE_SECTION_HEADER *section, const struct ParsedIma
              section_name_len);
          return false;
       }
+      // Limit section names to 127 bytes.  No section name should even
+      // come close to this in practice.
+      if (section_name_len > 0x7F) {
+         LOG("Section name exceeds 127 bytes (length %zu)", section_name_len);
+         return false;
+      }
    }
    for (j = 0; j < section_name_len; ++j) {
       if (name[j] == '\0')
